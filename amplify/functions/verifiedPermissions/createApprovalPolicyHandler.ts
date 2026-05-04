@@ -1,10 +1,10 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import {
   VerifiedPermissionsClient,
   CreatePolicyCommand,
+  DeletePolicyCommand,
 } from "@aws-sdk/client-verifiedpermissions";
-import { randomUUID } from "crypto";
 import { buildApprovalCedarPolicy } from "./buildApprovalCedarPolicy";
 
 const REGION = process.env.AWS_REGION ?? "us-east-1";
@@ -26,8 +26,9 @@ type AppSyncEvent = { arguments: CreateInput };
 
 /**
  * AppSync mutation resolver that creates an ApprovalPolicy record.
- * Writes a Cedar `approve` permit policy to AVP first, then persists
- * the record to DynamoDB. Rolls back the AVP policy if the DDB write fails.
+ * Uses GetItem on the composite primary key (permissionSetArn + principalKey)
+ * for an O(1) duplicate check before touching AVP.
+ * Writes AVP first, then DDB. Rolls back the AVP policy if the DDB write fails.
  */
 export const handler = async (event: AppSyncEvent) => {
   const {
@@ -38,8 +39,20 @@ export const handler = async (event: AppSyncEvent) => {
     principalDisplayName,
   } = event.arguments;
 
+  const resolvedPrincipalType = principalType ?? "USER";
+  const principalKey = `${resolvedPrincipalType}#${principalId}`;
+
+  const existing = await dynamo.send(
+    new GetCommand({ TableName: TABLE_NAME, Key: { permissionSetArn, principalKey } })
+  );
+  if (existing.Item) {
+    throw new Error(
+      `An approval policy already exists for this approver on permission set ${permissionSetArn}`
+    );
+  }
+
   const cedarPolicy = buildApprovalCedarPolicy({
-    principalType: principalType ?? "USER",
+    principalType: resolvedPrincipalType,
     principalId,
     permissionSetArn,
   });
@@ -50,35 +63,30 @@ export const handler = async (event: AppSyncEvent) => {
       definition: {
         static: {
           statement: cedarPolicy,
-          description: `approve: ${principalType ?? "USER"}/${principalId} → ${permissionSetArn}`,
+          description: `approve: ${resolvedPrincipalType}/${principalId} → ${permissionSetArn}`,
         },
       },
     })
   );
 
   const avpPolicyId = createPolicyResult.policyId!;
-
-  const id = randomUUID();
   const now = new Date().toISOString();
 
   const item = {
-    id,
     permissionSetArn,
+    principalKey,
     permissionSetName: permissionSetName ?? null,
-    principalType: principalType ?? "USER",
+    principalType: resolvedPrincipalType,
     principalId,
     principalDisplayName: principalDisplayName ?? null,
     avpPolicyId,
     createdAt: now,
     updatedAt: now,
-    __typename: "ApprovalPolicy",
   };
 
   try {
     await dynamo.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
   } catch (err) {
-    // Compensating transaction: remove the AVP policy so the two stores stay in sync
-    const { DeletePolicyCommand } = await import("@aws-sdk/client-verifiedpermissions");
     await avp.send(new DeletePolicyCommand({ policyStoreId: POLICY_STORE_ID, policyId: avpPolicyId }));
     throw err;
   }

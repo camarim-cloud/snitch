@@ -47,16 +47,19 @@ const schema = a.schema({
     })
     .authorization((allow) => [allow.group("Admins")]),
 
+  // Hash key: permissionSetArn, sort key: principalKey ("${principalType}#${principalId}").
+  // The composite primary key enables O(1) GetItem duplicate checks with no GSI or scan.
   ApprovalPolicy: a
     .model({
       permissionSetArn: a.string().required(),
+      principalKey: a.string().required(),
       permissionSetName: a.string(),
-      // principalType USER = Cognito username; GROUP = Cognito group name
       principalType: a.ref("PrincipalType"),
-      principalId: a.string().required(),
+      principalId: a.string(),
       principalDisplayName: a.string(),
       avpPolicyId: a.string(),
     })
+    .identifier(["permissionSetArn", "principalKey"])
     .authorization((allow) => [allow.group("Admins")]),
 
   // Custom types returned by Lambda queries
@@ -266,7 +269,10 @@ const schema = a.schema({
 
   deleteApprovalPolicyWithAVP: a
     .mutation()
-    .arguments({ id: a.string().required() })
+    .arguments({
+      permissionSetArn: a.string().required(),
+      principalKey: a.string().required(),
+    })
     .returns(a.boolean())
     .handler(a.handler.function(deleteApprovalPolicyFunction))
     .authorization((allow) => [allow.group("Admins")]),

@@ -249,7 +249,7 @@ const approvalPolicyTable = backend.data.resources.tables["ApprovalPolicy"];
 
 const approvalPolicyDdbPolicy = new PolicyStatement({
   effect: Effect.ALLOW,
-  actions: ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:GetItem"],
+  actions: ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"],
   resources: [approvalPolicyTable.tableArn],
 });
 

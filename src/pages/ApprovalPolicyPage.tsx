@@ -172,11 +172,14 @@ export function ApprovalPolicyPage() {
     }
   }
 
-  async function handleDeleteApprover(id: string) {
-    setDeletingId(id);
+  async function handleDeleteApprover(permissionSetArn: string, principalKey: string) {
+    const compositeKey = `${permissionSetArn}#${principalKey}`;
+    setDeletingId(compositeKey);
     try {
-      await client.mutations.deleteApprovalPolicyWithAVP({ id });
-      setApprovalPolicies((prev) => prev.filter((a) => a.id !== id));
+      await client.mutations.deleteApprovalPolicyWithAVP({ permissionSetArn, principalKey });
+      setApprovalPolicies((prev) =>
+        prev.filter((a) => !(a.permissionSetArn === permissionSetArn && a.principalKey === principalKey))
+      );
     } finally {
       setDeletingId(null);
     }
@@ -314,7 +317,7 @@ type ApprovalConfigPanelProps = {
   approvalPolicies: ApprovalPolicy[];
   deletingId: string | null;
   onAddApprover: (permissionSetArn: string, permissionSetName: string) => void;
-  onDeleteApprover: (id: string) => void;
+  onDeleteApprover: (permissionSetArn: string, principalKey: string) => void;
 };
 
 function ApprovalConfigPanel({
@@ -368,7 +371,7 @@ type PermissionSetApproversProps = {
   approvalPolicies: ApprovalPolicy[];
   deletingId: string | null;
   onAdd: () => void;
-  onDelete: (id: string) => void;
+  onDelete: (permissionSetArn: string, principalKey: string) => void;
 };
 
 function PermissionSetApprovers({
@@ -422,8 +425,8 @@ function PermissionSetApprovers({
             cell: (item) => (
               <Button
                 variant="inline-link"
-                loading={deletingId === item.id}
-                onClick={() => onDelete(item.id)}
+                loading={deletingId === `${item.permissionSetArn}#${item.principalKey}`}
+                onClick={() => onDelete(item.permissionSetArn, item.principalKey)}
               >
                 Remove
               </Button>
