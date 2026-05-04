@@ -39,7 +39,7 @@ Every Lambda's IAM role is assembled here. If a handler needs a new AWS action (
 
 ### Two data stores, one source of truth
 
-`PrivilegedPolicy` records exist in both **DynamoDB** (application metadata) and **AWS Verified Permissions** (Cedar policies). AVP is the authoritative source for access decisions. DynamoDB stores the `avpPolicyId` foreign key used for updates and deletes. The compensating-transaction order in each handler (create: AVP first → DDB; update/delete: DDB first → AVP) means a partial failure always leaves the rollback target reachable.
+`PrivilegedPolicy` records and `ApprovalPolicy` records both exist in **DynamoDB** (application metadata) and **AWS Verified Permissions** (Cedar policies). AVP is the authoritative source for access decisions. DynamoDB stores the `avpPolicyId` foreign key used for deletes. The compensating-transaction order in each handler (create: AVP first → DDB; update/delete: DDB first → AVP) means a partial failure always leaves the rollback target reachable.
 
 ### Conflict enforcement: one policy per (principal, resource)
 
@@ -118,8 +118,17 @@ Current split:
 | `approveRequest`, `rejectRequest`, `listPendingApprovals` | `storeApprovalToken`, `storeActiveToken` |
 | `listAllAccessRequests`, `revokeAccess` | `assignPermissionSet`, `removePermissionSet`, `setStatusFailed` |
 | `requestAccess`, `listAccessRequests` | |
+| `createApprovalPolicy`, `deleteApprovalPolicy` | |
 
 IAM grants and env vars for `data`-stack functions are set in `backend.ts` using the table values returned by `setupAccessRequestWorkflow()`, creating a one-directional dependency (`data` → `AccessRequestWorkflow`) that CloudFormation can resolve.
+
+### Approval authorization — AVP-gated, not Cognito-group-gated
+
+`listPendingApprovals`, `approveRequest`, and `rejectRequest` are authorized with `allow.authenticated()` (any logged-in user can call them). The Lambda handler is the enforcement point: it calls AVP `IsAuthorized` with the caller's Cognito username as a `Snitch::Approver` principal and the request's `permissionSetArn` as a `Snitch::PermissionSet` resource, injecting the caller's Cognito groups as `Snitch::ApproverGroup` parents so group-based approval policies resolve.
+
+This means: non-admin users who are configured as approvers (via an `ApprovalPolicy` record) can access the `ApproveRequestsPage` and act on requests for the permission sets they're authorized for. Admins with no `ApprovalPolicy` entries will see an empty list.
+
+The `ApproveRequestsPage` route has **no `AdminGuard`** — it is accessible to all authenticated users.
 
 ### `amplify/data/resource.ts` is the GraphQL contract
 

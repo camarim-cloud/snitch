@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { generateClient } from "aws-amplify/data";
-import { getCurrentUser } from "aws-amplify/auth";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
 import { useCollection } from "@cloudscape-design/collection-hooks";
@@ -54,8 +53,6 @@ type FormValues = {
   maxDurationDate: string;
   maxDurationTime: string;
   requiresApproval: boolean;
-  approverUsers: readonly Option[];
-  approverGroups: readonly Option[];
 };
 
 const EMPTY_FORM: FormValues = {
@@ -69,8 +66,6 @@ const EMPTY_FORM: FormValues = {
   maxDurationDate: "",
   maxDurationTime: "23:59",
   requiresApproval: false,
-  approverUsers: [],
-  approverGroups: [],
 };
 
 type AWSResources = {
@@ -79,8 +74,6 @@ type AWSResources = {
   accounts: Option[];
   ous: Option[];
   permissionSets: Option[];
-  cognitoUsers: Option[];
-  cognitoGroups: Option[];
 };
 
 const EMPTY_RESOURCES: AWSResources = {
@@ -89,8 +82,6 @@ const EMPTY_RESOURCES: AWSResources = {
   accounts: [],
   ous: [],
   permissionSets: [],
-  cognitoUsers: [],
-  cognitoGroups: [],
 };
 
 export function PrivilegedPoliciesPage() {
@@ -110,7 +101,6 @@ export function PrivilegedPoliciesPage() {
   const [loadingResources, setLoadingResources] = useState(false);
   const [resourcesError, setResourcesError] = useState<string | null>(null);
 
-  const [currentUsername, setCurrentUsername] = useState<string>("");
   const [deleting, setDeleting] = useState(false);
 
   const { items, filterProps, paginationProps, collectionProps, actions, filteredItemsCount } =
@@ -138,9 +128,6 @@ export function PrivilegedPoliciesPage() {
 
   const selectedItems = collectionProps.selectedItems as Policy[];
 
-  useEffect(() => {
-    getCurrentUser().then((u) => setCurrentUsername(u.username)).catch(() => {});
-  }, []);
 
   const fetchPolicies = useCallback(async () => {
     setLoadingPolicies(true);
@@ -159,20 +146,17 @@ export function PrivilegedPoliciesPage() {
     setLoadingResources(true);
     setResourcesError(null);
     try {
-      const [usersRes, groupsRes, accountsRes, ousRes, psRes, cognitoUsersRes, cognitoGroupsRes] =
-        await Promise.all([
-          client.queries.listIDCUsers(),
-          client.queries.listIDCGroups(),
-          client.queries.listAWSAccounts(),
-          client.queries.listOUs(),
-          client.queries.listPermissionSets(),
-          client.queries.listCognitoUsers(),
-          client.queries.listCognitoGroups(),
-        ]);
+      const [usersRes, groupsRes, accountsRes, ousRes, psRes] = await Promise.all([
+        client.queries.listIDCUsers(),
+        client.queries.listIDCGroups(),
+        client.queries.listAWSAccounts(),
+        client.queries.listOUs(),
+        client.queries.listPermissionSets(),
+      ]);
 
-      const graphqlErrors = [
-        usersRes, groupsRes, accountsRes, ousRes, psRes, cognitoUsersRes, cognitoGroupsRes,
-      ].flatMap((r) => r.errors ?? []);
+      const graphqlErrors = [usersRes, groupsRes, accountsRes, ousRes, psRes].flatMap(
+        (r) => r.errors ?? []
+      );
       if (graphqlErrors.length > 0) {
         console.error("AWS resource query errors:", graphqlErrors);
         setResourcesError(
@@ -182,23 +166,15 @@ export function PrivilegedPoliciesPage() {
         return;
       }
 
-      const hasNullData = [
-        usersRes, groupsRes, accountsRes, ousRes, psRes, cognitoUsersRes, cognitoGroupsRes,
-      ].some((r) => r.data === null);
+      const hasNullData = [usersRes, groupsRes, accountsRes, ousRes, psRes].some(
+        (r) => r.data === null
+      );
       if (hasNullData) {
         setResourcesError(
           "AWS resources returned no data. Make sure the backend is deployed: run `npm run sandbox`."
         );
         return;
       }
-
-      const cognitoUserOptions = (cognitoUsersRes.data ?? [])
-        .filter((u) => u?.username !== currentUsername)
-        .map((u) => ({
-          label: u?.displayName ?? u?.email ?? u?.username ?? "",
-          value: u?.username ?? "",
-          description: u?.email ?? undefined,
-        }));
 
       setAwsResources({
         users: (usersRes.data ?? []).map((u) => ({
@@ -226,12 +202,6 @@ export function PrivilegedPoliciesPage() {
           value: ps?.arn ?? "",
           description: ps?.description ?? undefined,
         })),
-        cognitoUsers: cognitoUserOptions,
-        cognitoGroups: (cognitoGroupsRes.data ?? []).map((g) => ({
-          label: g?.groupName ?? "",
-          value: g?.groupName ?? "",
-          description: g?.description ?? undefined,
-        })),
       });
     } catch (err) {
       console.error("AWS resource load error:", err);
@@ -241,7 +211,7 @@ export function PrivilegedPoliciesPage() {
     } finally {
       setLoadingResources(false);
     }
-  }, [currentUsername]);
+  }, []);
 
   function clearFormErrors() {
     setFormError(null);
@@ -289,8 +259,6 @@ export function PrivilegedPoliciesPage() {
         return { maxDurationDate: date, maxDurationTime: time };
       })(),
       requiresApproval: policy.requiresApproval ?? false,
-      approverUsers: (policy.approverUsernames ?? []).map((u) => ({ label: u ?? "", value: u ?? "" })),
-      approverGroups: (policy.approverGroupNames ?? []).map((g) => ({ label: g ?? "", value: g ?? "" })),
     });
 
     clearFormErrors();
@@ -392,12 +360,6 @@ export function PrivilegedPoliciesPage() {
           formValues.maxDurationTime
         ),
         requiresApproval: formValues.requiresApproval,
-        approverUsernames: formValues.requiresApproval
-          ? formValues.approverUsers.map((o) => o.value ?? "")
-          : [],
-        approverGroupNames: formValues.requiresApproval
-          ? formValues.approverGroups.map((o) => o.value ?? "")
-          : [],
       };
 
       if (modalMode === "create") {
@@ -736,59 +698,12 @@ export function PrivilegedPoliciesPage() {
                   <Toggle
                     checked={formValues.requiresApproval}
                     onChange={({ detail }) =>
-                      setFormValues((prev) => ({
-                        ...prev,
-                        requiresApproval: detail.checked,
-                        approverUsers: detail.checked ? prev.approverUsers : [],
-                        approverGroups: detail.checked ? prev.approverGroups : [],
-                      }))
+                      setFormValues((prev) => ({ ...prev, requiresApproval: detail.checked }))
                     }
                   >
                     {formValues.requiresApproval ? "Approval required" : "No approval required"}
                   </Toggle>
                 </FormField>
-
-                {formValues.requiresApproval && (
-                  <>
-                    <FormField
-                      label="Approver users"
-                      description="Cognito users who can approve access requests for this policy. You cannot add yourself."
-                    >
-                      <Multiselect
-                        selectedOptions={formValues.approverUsers}
-                        onChange={({ detail }) =>
-                          setFormValues((prev) => ({
-                            ...prev,
-                            approverUsers: detail.selectedOptions,
-                          }))
-                        }
-                        options={awsResources.cognitoUsers}
-                        filteringType="auto"
-                        placeholder="Select approver users"
-                        empty="No users found"
-                      />
-                    </FormField>
-
-                    <FormField
-                      label="Approver groups"
-                      description="Cognito groups whose members can approve access requests for this policy."
-                    >
-                      <Multiselect
-                        selectedOptions={formValues.approverGroups}
-                        onChange={({ detail }) =>
-                          setFormValues((prev) => ({
-                            ...prev,
-                            approverGroups: detail.selectedOptions,
-                          }))
-                        }
-                        options={awsResources.cognitoGroups}
-                        filteringType="auto"
-                        placeholder="Select approver groups"
-                        empty="No groups found"
-                      />
-                    </FormField>
-                  </>
-                )}
               </SpaceBetween>
             </Form>
           </SpaceBetween>

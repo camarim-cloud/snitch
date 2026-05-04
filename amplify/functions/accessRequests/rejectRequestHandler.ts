@@ -1,13 +1,18 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { SFNClient, SendTaskFailureCommand } from "@aws-sdk/client-sfn";
+import {
+  VerifiedPermissionsClient,
+  IsAuthorizedCommand,
+} from "@aws-sdk/client-verifiedpermissions";
 
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const TABLE_NAME = process.env.ACCESS_REQUEST_TABLE_NAME!;
-const PRIVILEGED_POLICY_TABLE_NAME = process.env.PRIVILEGED_POLICY_TABLE_NAME!;
+const POLICY_STORE_ID = process.env.AVP_POLICY_STORE_ID!;
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const sfn = new SFNClient({ region: REGION });
+const avp = new VerifiedPermissionsClient({ region: REGION });
 
 type RejectInput = { requestId: string; approverComment?: string | null };
 
@@ -48,13 +53,7 @@ export const handler = async (event: AppSyncEvent) => {
     );
   }
 
-  await assertIsAuthorizedApprover(
-    request.idcUserId,
-    request.accountId,
-    request.permissionSetArn,
-    approverUsername,
-    callerGroups
-  );
+  await assertIsAuthorizedApprover(request.permissionSetArn, approverUsername, callerGroups);
 
   const now = new Date().toISOString();
 
@@ -97,39 +96,32 @@ export const handler = async (event: AppSyncEvent) => {
 };
 
 async function assertIsAuthorizedApprover(
-  idcUserId: string,
-  accountId: string,
   permissionSetArn: string,
   callerUsername: string,
   callerGroups: string[]
 ): Promise<void> {
-  const scan = await dynamo.send(
-    new ScanCommand({
-      TableName: PRIVILEGED_POLICY_TABLE_NAME,
-      FilterExpression: "principalId = :pid AND requiresApproval = :true",
-      ExpressionAttributeValues: { ":pid": idcUserId, ":true": true },
+  const result = await avp.send(
+    new IsAuthorizedCommand({
+      policyStoreId: POLICY_STORE_ID,
+      principal: { entityType: "Snitch::Approver", entityId: callerUsername },
+      action: { actionType: "Snitch::Action", actionId: "approve" },
+      resource: { entityType: "Snitch::PermissionSet", entityId: permissionSetArn },
+      entities: {
+        entityList: [
+          {
+            identifier: { entityType: "Snitch::Approver", entityId: callerUsername },
+            attributes: {},
+            parents: callerGroups.map((g) => ({
+              entityType: "Snitch::ApproverGroup",
+              entityId: g,
+            })),
+          },
+        ],
+      },
     })
   );
 
-  const matchingPolicy = (scan.Items ?? []).find(
-    (p) =>
-      (p.accountIds ?? []).includes(accountId) &&
-      (p.permissionSetArns ?? []).includes(permissionSetArn)
-  );
-
-  if (!matchingPolicy) {
-    throw new Error(
-      `No policy with requiresApproval found for this request (idcUserId=${idcUserId})`
-    );
-  }
-
-  const approverUsernames: string[] = matchingPolicy.approverUsernames ?? [];
-  const approverGroupNames: string[] = matchingPolicy.approverGroupNames ?? [];
-  const authorized =
-    approverUsernames.includes(callerUsername) ||
-    callerGroups.some((g) => approverGroupNames.includes(g));
-
-  if (!authorized) {
+  if (result.decision !== "ALLOW") {
     throw new Error(`You are not authorized to reject this request`);
   }
 }

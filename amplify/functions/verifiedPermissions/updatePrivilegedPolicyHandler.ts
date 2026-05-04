@@ -33,8 +33,6 @@ type UpdateInput = {
   permissionSetNames?: string[] | null;
   maxDurationMinutes?: number | null;
   requiresApproval?: boolean | null;
-  approverUsernames?: string[] | null;
-  approverGroupNames?: string[] | null;
 };
 
 type AppSyncEvent = { arguments: UpdateInput };
@@ -78,8 +76,6 @@ export const handler = async (event: AppSyncEvent) => {
         "permissionSetNames = :permissionSetNames",
         "maxDurationMinutes = :maxDurationMinutes",
         "requiresApproval = :requiresApproval",
-        "approverUsernames = :approverUsernames",
-        "approverGroupNames = :approverGroupNames",
         "updatedAt = :updatedAt",
       ].join(", "),
       ExpressionAttributeNames: { "#name": "name" },
@@ -95,8 +91,6 @@ export const handler = async (event: AppSyncEvent) => {
         ":permissionSetNames": args.permissionSetNames ?? [],
         ":maxDurationMinutes": args.maxDurationMinutes ?? null,
         ":requiresApproval": args.requiresApproval ?? false,
-        ":approverUsernames": args.approverUsernames ?? [],
-        ":approverGroupNames": args.approverGroupNames ?? [],
         ":updatedAt": updatedAt,
       },
     })
@@ -164,8 +158,6 @@ export const handler = async (event: AppSyncEvent) => {
     permissionSetNames: args.permissionSetNames ?? [],
     maxDurationMinutes: args.maxDurationMinutes ?? null,
     requiresApproval: args.requiresApproval ?? false,
-    approverUsernames: args.approverUsernames ?? [],
-    approverGroupNames: args.approverGroupNames ?? [],
     avpPolicyId,
     updatedAt,
   };

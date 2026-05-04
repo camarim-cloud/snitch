@@ -32,3 +32,17 @@ export const evaluateAccessFunction = defineFunction({
   timeoutSeconds: TIMEOUT,
   resourceGroupName: "data",
 });
+
+export const createApprovalPolicyFunction = defineFunction({
+  name: "createApprovalPolicy",
+  entry: "./createApprovalPolicyHandler.ts",
+  timeoutSeconds: TIMEOUT,
+  resourceGroupName: "data",
+});
+
+export const deleteApprovalPolicyFunction = defineFunction({
+  name: "deleteApprovalPolicy",
+  entry: "./deleteApprovalPolicyHandler.ts",
+  timeoutSeconds: TIMEOUT,
+  resourceGroupName: "data",
+});

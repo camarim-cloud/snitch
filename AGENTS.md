@@ -5,12 +5,13 @@
 A fullstack application for managing privileged access to AWS accounts. Admins define policies that grant IAM Identity Center (IDC) users or groups access to specific AWS accounts and OUs using chosen Permission Sets. Each policy is stored in DynamoDB and mirrored as a Cedar policy in AWS Verified Permissions, which is the authoritative source for access evaluation.
 
 **Core features:**
-- User authentication with Amazon Cognito (Admins group gates all access)
+- User authentication with Amazon Cognito (Admins group gates admin-only pages)
 - Privileged policy management (create, read, update, delete) with conflict enforcement (one policy per principal + resource)
 - Cedar policy authoring via `buildCedarPolicy` — policies are stored in AVP and evaluated at request time
 - AWS resource discovery: IDC users/groups, Cognito users/groups, AWS accounts, OUs, Permission Sets
 - JIT access requests with a Step Functions workflow: assign permission set → interruptible wait → revoke
-- Optional approval gate on policies: requests pause at `PENDING_APPROVAL` until an admin approves or rejects (or the 24-hour timeout fires)
+- Optional approval gate on policies: requests pause at `PENDING_APPROVAL` until a configured approver acts (or the 24-hour timeout fires)
+- Approval Policy management: configure which Cognito users/groups can approve requests per permission set; persisted as Cedar `approve` policies in AVP
 - Elevated Access page (admin-only): view all requests across all users and revoke any ACTIVE request early
 - Responsive UI built with Cloudscape Design System
 
@@ -43,10 +44,13 @@ snitch/
 │   └── functions/
 │       ├── awsResources/       # Lambda resolvers: list IDC users/groups, accounts, OUs, permission sets
 │       └── verifiedPermissions/
-│           ├── cedarPolicyBuilder.ts           # Pure function: builds Cedar PERMIT statement
+│           ├── cedarPolicyBuilder.ts              # Pure function: builds Cedar PERMIT statement (assume)
+│           ├── buildApprovalCedarPolicy.ts        # Pure function: builds Cedar PERMIT statement (approve)
 │           ├── createPrivilegedPolicyHandler.ts
 │           ├── updatePrivilegedPolicyHandler.ts
-│           └── deletePrivilegedPolicyHandler.ts
+│           ├── deletePrivilegedPolicyHandler.ts
+│           ├── createApprovalPolicyHandler.ts     # Creates ApprovalPolicy record + AVP approve policy
+│           └── deleteApprovalPolicyHandler.ts     # Deletes ApprovalPolicy record + AVP approve policy
 ├── src/
 │   ├── components/             # Reusable UI components
 │   ├── hooks/                  # Custom React hooks
@@ -54,9 +58,10 @@ snitch/
 │   │   └── duration.ts         # Shared: todayDateStr, minutesToMaxDuration, maxDurationToMinutes, formatDuration
 │   ├── types/                  # Shared TypeScript types
 │   ├── pages/
-│   │   ├── PrivilegedPoliciesPage.tsx  # Admin CRUD for privileged policies (with approval config)
+│   │   ├── PrivilegedPoliciesPage.tsx  # Admin CRUD for privileged policies (requiresApproval toggle only)
+│   │   ├── ApprovalPolicyPage.tsx      # Admin: configure per-permission-set approvers (Approval Policies)
 │   │   ├── RequestAccessPage.tsx       # End-user JIT access request form + request history
-│   │   ├── ApproveRequestsPage.tsx     # Admin page: review, approve, or reject pending requests
+│   │   ├── ApproveRequestsPage.tsx     # Any authenticated approver: review, approve, or reject pending requests
 │   │   └── ElevatedAccessPage.tsx      # Admin page: view all requests, revoke ACTIVE ones early
 │   ├── test/
 │   │   └── setup.ts            # Vitest setup (jest-dom matchers)
@@ -69,20 +74,31 @@ snitch/
 
 ## Privileged Policy — Approval Configuration
 
-Each `PrivilegedPolicy` can optionally require an admin to approve requests before access is granted. The relevant fields stored on the policy record:
+Each `PrivilegedPolicy` can optionally require approval before access is granted. The `requiresApproval` boolean field on the policy record enables this gate.
+
+**Who can approve** is configured separately in the `ApprovalPolicy` model (not on `PrivilegedPolicy`). Each `ApprovalPolicy` record defines a single approver (Cognito user or group) for a specific permission set ARN, and is backed by a Cedar `approve` policy in AVP.
+
+When `requiresApproval` is `true` on a `PrivilegedPolicy`:
+1. `evaluateMyAccess` returns `requiresApproval: true` for the matching `(accountId, permissionSetArn)` pair.
+2. The Request Access form shows an info alert warning the user that approval is required.
+3. On submission, `requestAccess` creates the record with `status: "PENDING_APPROVAL"` and the Step Function pauses at `WaitForApproval`.
+4. The `Approve Requests` page lists requests pending the current user's review. Available to **any authenticated user** — access is gated by AVP `IsAuthorized` per request's permission set, not by Cognito group.
+5. `approveRequest` / `rejectRequest` mutations resume or terminate the Step Function execution.
+
+### Approval Policy model
+
+`ApprovalPolicy` records live in their own DynamoDB table (auto-generated by Amplify). Each record maps one approver to one permission set:
 
 | Field | Type | Purpose |
 |---|---|---|
-| `requiresApproval` | boolean | Enables the approval gate for all requests under this policy |
-| `approverUsernames` | string[] | Cognito usernames of users who can approve/reject |
-| `approverGroupNames` | string[] | Cognito group names whose members can approve/reject |
+| `permissionSetArn` | string | The permission set this approver can act on |
+| `permissionSetName` | string | Display name (denormalized) |
+| `principalType` | `USER` \| `GROUP` | Cognito user or Cognito group |
+| `principalId` | string | Cognito username (USER) or Cognito group name (GROUP) |
+| `principalDisplayName` | string | Human-readable label |
+| `avpPolicyId` | string | Foreign key to the Cedar `approve` policy in AVP |
 
-When `requiresApproval` is `true`:
-1. The `evaluateMyAccess` query returns `requiresApproval: true` for the matching `(accountId, permissionSetArn)` pair.
-2. The Request Access form shows an info alert warning the user that approval is required.
-3. On submission, `requestAccess` creates the record with `status: "PENDING_APPROVAL"` and the Step Function pauses at `WaitForApproval`.
-4. The `Approve Requests` page (admin-only) lists requests pending the current admin's review.
-5. `approveRequest` / `rejectRequest` mutations resume or terminate the Step Function execution.
+Managed via `createApprovalPolicyWithAVP` / `deleteApprovalPolicyWithAVP` mutations (no update — delete + recreate). The `ApprovalPolicyPage` in the UI provides the admin interface.
 
 ### Access Request Statuses
 
@@ -137,13 +153,15 @@ AssignPermissionSet → WaitForEarlyRevocation → RemovePermissionSet
 | `setStatusFailedHandler.ts` | AccessRequestWorkflow | Sets `FAILED` on unrecoverable workflow errors |
 | `requestAccessHandler.ts` | AccessRequestWorkflow | Persists the request and starts the state machine |
 | `listAccessRequestsHandler.ts` | AccessRequestWorkflow | Returns all requests for a given IDC user (newest first, via GSI) |
-| `approveRequestHandler.ts` | data | Validates approver, calls `SendTaskSuccess`, resumes state machine |
-| `rejectRequestHandler.ts` | data | Validates approver, sets `REJECTED` atomically, calls `SendTaskFailure` |
-| `listPendingApprovalsHandler.ts` | data | Returns `PENDING_APPROVAL` requests the calling admin can act on |
+| `approveRequestHandler.ts` | data | Checks AVP `IsAuthorized` (approve/PermissionSet), calls `SendTaskSuccess`, resumes state machine |
+| `rejectRequestHandler.ts` | data | Checks AVP `IsAuthorized` (approve/PermissionSet), sets `REJECTED` atomically, calls `SendTaskFailure` |
+| `listPendingApprovalsHandler.ts` | data | Scans `PENDING_APPROVAL` requests; filters by AVP `IsAuthorized` per unique permission set ARN |
 | `listAllAccessRequestsHandler.ts` | data | Returns all requests across all users (admin-only, newest first) |
 | `revokeAccessHandler.ts` | data | Signals `WaitForEarlyRevocation` via `SendTaskSuccess`; persists optional `revokeComment` for audit |
 
 `approveRequest`, `rejectRequest`, `listPendingApprovals`, `listAllAccessRequests`, `revokeAccess` are in the `data` stack (`resourceGroupName: "data"`) — see `CLAUDE.md` for why.
+
+`createApprovalPolicyHandler.ts` and `deleteApprovalPolicyHandler.ts` are also in the `data` stack (AppSync-backed). They keep the `ApprovalPolicy` DynamoDB table and AVP Cedar policies in sync (create: AVP first → DDB; delete: DDB first → AVP).
 
 ## AWS Verified Permissions Integration
 
@@ -154,29 +172,36 @@ Every `PrivilegedPolicy` record has a corresponding Cedar policy in AVP. The pol
 ### Cedar Schema (`Snitch` namespace)
 
 ```
-Principal: Snitch::User (memberOf Group) | Snitch::Group
+── assume action ──────────────────────────────────────────────────────────────
+Principal: Snitch::User (IDC user ID, memberOf Group) | Snitch::Group (IDC group ID)
 Resource:  Snitch::Account (memberOf OU) | Snitch::OU (memberOf OU)
 Action:    Snitch::Action::"assume"
 Context:   { permissionSetArn: String (required) }
+
+── approve action ─────────────────────────────────────────────────────────────
+Principal: Snitch::Approver (Cognito username, memberOf ApproverGroup) | Snitch::ApproverGroup (Cognito group name)
+Resource:  Snitch::PermissionSet (permission set ARN)
+Action:    Snitch::Action::"approve"
+Context:   (none)
 ```
+
+The `assume` and `approve` actions use **different principal namespaces** — IDC IDs for `assume`, Cognito identifiers for `approve`. This avoids conflating the two identity systems in the same entity type.
 
 ### Policy Lifecycle
 
-All three mutations (`createPrivilegedPolicyWithAVP`, `updatePrivilegedPolicyWithAVP`, `deletePrivilegedPolicyWithAVP`) are AppSync custom resolvers backed by Lambda. They keep DynamoDB and AVP in sync with compensating transactions:
+**Privileged policies** (`createPrivilegedPolicyWithAVP`, `updatePrivilegedPolicyWithAVP`, `deletePrivilegedPolicyWithAVP`) and **approval policies** (`createApprovalPolicyWithAVP`, `deleteApprovalPolicyWithAVP`) are all AppSync custom resolvers backed by Lambda. Each keeps its DynamoDB table and AVP in sync with compensating transactions:
 
 | Mutation | Order | Rollback on failure |
 |---|---|---|
-| Create | AVP first → DynamoDB | Delete AVP policy |
-| Update | DynamoDB first → AVP | Restore DynamoDB snapshot |
-| Delete | DynamoDB first → AVP | Restore DynamoDB snapshot |
+| Create (both types) | AVP first → DynamoDB | Delete AVP policy |
+| Update (privileged only) | DynamoDB first → AVP | Restore DynamoDB snapshot |
+| Delete (both types) | DynamoDB first → AVP | Restore DynamoDB snapshot |
 
-The `avpPolicyId` returned by AVP is stored on the DynamoDB item and used for subsequent updates and deletes.
+The `avpPolicyId` returned by AVP is stored on the DynamoDB item and used for subsequent deletes.
 
-### Cedar Policy Shape
+### Cedar Policy Shapes
 
-`buildCedarPolicy` in `cedarPolicyBuilder.ts` produces a PERMIT statement. The `when` clause encodes:
-- **Resources**: specific `Account` or `OU` entities (OR-joined)
-- **Permission set**: `context.permissionSetArn` must be in the allowed set
+**`buildCedarPolicy`** (`cedarPolicyBuilder.ts`) — produces the `assume` PERMIT statement. The `when` clause encodes resources (Account/OU, OR-joined) and the allowed permission set ARN:
 
 ```cedar
 permit (
@@ -194,27 +219,64 @@ permit (
 
 Groups use `principal in Snitch::Group::"<id>"` instead of `==`.
 
+**`buildApprovalCedarPolicy`** (`buildApprovalCedarPolicy.ts`) — produces the `approve` PERMIT statement. No `when` clause needed:
+
+```cedar
+// USER approver:
+permit (
+  principal == Snitch::Approver::"alice",
+  action == Snitch::Action::"approve",
+  resource == Snitch::PermissionSet::"arn:aws:sso:::permissionSet/ps-1"
+);
+
+// GROUP approver:
+permit (
+  principal in Snitch::ApproverGroup::"Approvers",
+  action == Snitch::Action::"approve",
+  resource == Snitch::PermissionSet::"arn:aws:sso:::permissionSet/ps-1"
+);
+```
+
 ### Environment Variables (Lambda)
 
-| Variable | Source |
+| Variable | Used by |
 |---|---|
-| `AVP_POLICY_STORE_ID` | Set by `backend.ts` from `CfnPolicyStore.attrPolicyStoreId` |
-| `PRIVILEGED_POLICY_TABLE_NAME` | Set by `backend.ts` from the DynamoDB table name |
+| `AVP_POLICY_STORE_ID` | All AVP-touching handlers (create/update/delete policies, evaluate access, approve/reject/listPending) |
+| `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD handlers + evaluateAccess |
+| `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
+| `ACCESS_REQUEST_TABLE_NAME` | All access-request handlers |
 
 ### IAM Permissions
 
-The three AVP Lambda functions are granted:
-- `verifiedpermissions:CreatePolicy`, `UpdatePolicy`, `DeletePolicy` — scoped to the policy store ARN
-- `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem` — scoped to the `PrivilegedPolicy` table ARN
+**Privileged policy handlers** (`create`, `update`, `delete`):
+- `verifiedpermissions:CreatePolicy`, `UpdatePolicy`, `DeletePolicy` — scoped to policy store ARN
+- `dynamodb:GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Scan` — scoped to `PrivilegedPolicy` table
+
+**Approval policy handlers** (`createApprovalPolicy`, `deleteApprovalPolicy`):
+- `verifiedpermissions:CreatePolicy`, `DeletePolicy` — scoped to policy store ARN
+- `dynamodb:PutItem`, `DeleteItem`, `GetItem` — scoped to `ApprovalPolicy` table
+
+**Approve/reject/listPending handlers**:
+- `verifiedpermissions:IsAuthorized` — scoped to policy store ARN
+- `dynamodb:GetItem`, `UpdateItem`, `Scan` — scoped to `AccessRequestTable`
 
 ### Adding Access Evaluation
 
-When implementing a request-time authorization check, use `IsAuthorized` or `IsAuthorizedWithToken` from the AVP SDK. Pass:
+**`assume` check** (is IDC user allowed to access an account?):
 - `principal`: `{ entityType: "Snitch::User", entityId: "<idc-user-id>" }`
 - `action`: `{ actionType: "Snitch::Action", actionId: "assume" }`
 - `resource`: `{ entityType: "Snitch::Account", entityId: "<account-id>" }`
 - `context`: `{ contextMap: { permissionSetArn: { string: "<arn>" } } }`
-- `entities`: include group memberships so AVP can resolve `principal in Group` policies
+- `entities`: IDC group memberships as `Snitch::User` → parents `Snitch::Group`
+
+**`approve` check** (can a Cognito user approve a request for a permission set?):
+- `principal`: `{ entityType: "Snitch::Approver", entityId: "<cognito-username>" }`
+- `action`: `{ actionType: "Snitch::Action", actionId: "approve" }`
+- `resource`: `{ entityType: "Snitch::PermissionSet", entityId: "<permission-set-arn>" }`
+- `context`: (omit — not required)
+- `entities`: Cognito group memberships as `Snitch::Approver` → parents `Snitch::ApproverGroup`
+
+Both checks return `decision: "ALLOW"` or `"DENY"`. Always inject entity parents so group-based policies resolve correctly.
 
 ## Import Patterns
 
@@ -321,6 +383,7 @@ throw new Error(`Expected PrivilegedPolicy id to be a non-empty string, got: ${J
 - Mock external I/O (Amplify API, DynamoDB, AVP SDK) with named fake classes, not inline stubs.
 - Tests must be F.I.R.S.T: fast, independent, repeatable, self-validating, timely.
 - `buildCedarPolicy` must be tested with unit tests covering: USER vs GROUP principal, accounts-only, OUs-only, mixed, empty resource lists.
+- `buildApprovalCedarPolicy` must be tested with unit tests covering: USER vs GROUP principal, different ARNs.
 - Setup file: `src/test/setup.ts`. Test files: `.test.tsx` suffix.
 
 ## State Management

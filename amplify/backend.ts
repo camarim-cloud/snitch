@@ -21,6 +21,8 @@ import {
   updatePrivilegedPolicyFunction,
   deletePrivilegedPolicyFunction,
   evaluateAccessFunction,
+  createApprovalPolicyFunction,
+  deleteApprovalPolicyFunction,
 } from "./functions/verifiedPermissions/resource";
 import {
   requestAccessFunction,
@@ -52,6 +54,8 @@ const backend = defineBackend({
   updatePrivilegedPolicyFunction,
   deletePrivilegedPolicyFunction,
   evaluateAccessFunction,
+  createApprovalPolicyFunction,
+  deleteApprovalPolicyFunction,
   requestAccessFunction,
   listAccessRequestsFunction,
   assignPermissionSetFunction,
@@ -138,9 +142,9 @@ for (const fn of [
 // ─── Verified Permissions policy store ───────────────────────────────────────
 
 // Cedar schema for the Snitch namespace:
-//   Principal — Snitch::User (memberOf Group) | Snitch::Group
-//   Resource  — Snitch::Account (memberOf OU) | Snitch::OU (memberOf OU)
-//   Action    — Snitch::Action::"assume" with required context.permissionSetArn
+//   assume — principal: User (IDC) | Group (IDC); resource: Account | OU; context: permissionSetArn
+//   approve — principal: Approver (Cognito username) | ApproverGroup (Cognito group name);
+//             resource: PermissionSet (ARN); no context required
 const cedarSchema = {
   Snitch: {
     entityTypes: {
@@ -148,6 +152,9 @@ const cedarSchema = {
       Group: { memberOfTypes: [] },
       Account: { memberOfTypes: ["OU"] },
       OU: { memberOfTypes: ["OU"] },
+      Approver: { memberOfTypes: ["ApproverGroup"] },
+      ApproverGroup: { memberOfTypes: [] },
+      PermissionSet: { memberOfTypes: [] },
     },
     actions: {
       assume: {
@@ -160,6 +167,12 @@ const cedarSchema = {
               permissionSetArn: { type: "String", required: true },
             },
           },
+        },
+      },
+      approve: {
+        appliesTo: {
+          principalTypes: ["Approver", "ApproverGroup"],
+          resourceTypes: ["PermissionSet"],
         },
       },
     },
@@ -230,6 +243,35 @@ for (const fn of [
   fn.resources.lambda.addToRolePolicy(conflictCheckDdbPolicy);
 }
 
+// ─── Approval policy handlers ─────────────────────────────────────────────────
+
+const approvalPolicyTable = backend.data.resources.tables["ApprovalPolicy"];
+
+const approvalPolicyDdbPolicy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:GetItem"],
+  resources: [approvalPolicyTable.tableArn],
+});
+
+const avpCreateDeletePolicy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: ["verifiedpermissions:CreatePolicy", "verifiedpermissions:DeletePolicy"],
+  resources: [policyStoreArn],
+});
+
+for (const fn of [
+  backend.createApprovalPolicyFunction,
+  backend.deleteApprovalPolicyFunction,
+]) {
+  fn.resources.lambda.addToRolePolicy(avpCreateDeletePolicy);
+  fn.resources.lambda.addToRolePolicy(approvalPolicyDdbPolicy);
+  (fn.resources.lambda as LambdaFunction).addEnvironment("AVP_POLICY_STORE_ID", policyStoreId);
+  (fn.resources.lambda as LambdaFunction).addEnvironment(
+    "APPROVAL_POLICY_TABLE_NAME",
+    approvalPolicyTable.tableName
+  );
+}
+
 backend.evaluateAccessFunction.resources.lambda.addToRolePolicy(
   new PolicyStatement({
     effect: Effect.ALLOW,
@@ -279,10 +321,10 @@ const accessRequestApprovalDdbPolicy = new PolicyStatement({
   resources: [accessRequestTableArn],
 });
 
-const privilegedPolicyApprovalReadPolicy = new PolicyStatement({
+const avpIsAuthorizedPolicy = new PolicyStatement({
   effect: Effect.ALLOW,
-  actions: ["dynamodb:Scan", "dynamodb:GetItem"],
-  resources: [privilegedPolicyTable.tableArn],
+  actions: ["verifiedpermissions:IsAuthorized"],
+  resources: [policyStoreArn],
 });
 
 const sendTaskPolicy = new PolicyStatement({
@@ -297,31 +339,26 @@ for (const fn of [
   backend.rejectRequestFunction,
 ]) {
   fn.resources.lambda.addToRolePolicy(accessRequestApprovalDdbPolicy);
-  fn.resources.lambda.addToRolePolicy(privilegedPolicyApprovalReadPolicy);
+  fn.resources.lambda.addToRolePolicy(avpIsAuthorizedPolicy);
   fn.resources.lambda.addToRolePolicy(sendTaskPolicy);
   (fn.resources.lambda as LambdaFunction).addEnvironment(
     "ACCESS_REQUEST_TABLE_NAME",
     accessRequestTableName
   );
-  (fn.resources.lambda as LambdaFunction).addEnvironment(
-    "PRIVILEGED_POLICY_TABLE_NAME",
-    privilegedPolicyTable.tableName
-  );
+  (fn.resources.lambda as LambdaFunction).addEnvironment("AVP_POLICY_STORE_ID", policyStoreId);
 }
 
 backend.listPendingApprovalsFunction.resources.lambda.addToRolePolicy(
   accessRequestApprovalDdbPolicy
 );
-backend.listPendingApprovalsFunction.resources.lambda.addToRolePolicy(
-  privilegedPolicyApprovalReadPolicy
-);
+backend.listPendingApprovalsFunction.resources.lambda.addToRolePolicy(avpIsAuthorizedPolicy);
 (backend.listPendingApprovalsFunction.resources.lambda as LambdaFunction).addEnvironment(
   "ACCESS_REQUEST_TABLE_NAME",
   accessRequestTableName
 );
 (backend.listPendingApprovalsFunction.resources.lambda as LambdaFunction).addEnvironment(
-  "PRIVILEGED_POLICY_TABLE_NAME",
-  privilegedPolicyTable.tableName
+  "AVP_POLICY_STORE_ID",
+  policyStoreId
 );
 
 backend.listAllAccessRequestsFunction.resources.lambda.addToRolePolicy(

@@ -14,6 +14,8 @@ import {
   updatePrivilegedPolicyFunction,
   deletePrivilegedPolicyFunction,
   evaluateAccessFunction,
+  createApprovalPolicyFunction,
+  deleteApprovalPolicyFunction,
 } from "../functions/verifiedPermissions/resource";
 import {
   requestAccessFunction,
@@ -42,8 +44,18 @@ const schema = a.schema({
       maxDurationMinutes: a.integer(),
       avpPolicyId: a.string(),
       requiresApproval: a.boolean(),
-      approverUsernames: a.string().array(),
-      approverGroupNames: a.string().array(),
+    })
+    .authorization((allow) => [allow.group("Admins")]),
+
+  ApprovalPolicy: a
+    .model({
+      permissionSetArn: a.string().required(),
+      permissionSetName: a.string(),
+      // principalType USER = Cognito username; GROUP = Cognito group name
+      principalType: a.ref("PrincipalType"),
+      principalId: a.string().required(),
+      principalDisplayName: a.string(),
+      avpPolicyId: a.string(),
     })
     .authorization((allow) => [allow.group("Admins")]),
 
@@ -207,8 +219,6 @@ const schema = a.schema({
       permissionSetNames: a.string().array(),
       maxDurationMinutes: a.integer(),
       requiresApproval: a.boolean(),
-      approverUsernames: a.string().array(),
-      approverGroupNames: a.string().array(),
     })
     .returns(a.ref("PrivilegedPolicy"))
     .handler(a.handler.function(createPrivilegedPolicyFunction))
@@ -229,8 +239,6 @@ const schema = a.schema({
       permissionSetNames: a.string().array(),
       maxDurationMinutes: a.integer(),
       requiresApproval: a.boolean(),
-      approverUsernames: a.string().array(),
-      approverGroupNames: a.string().array(),
     })
     .returns(a.ref("PrivilegedPolicy"))
     .handler(a.handler.function(updatePrivilegedPolicyFunction))
@@ -241,6 +249,26 @@ const schema = a.schema({
     .arguments({ id: a.string().required() })
     .returns(a.boolean())
     .handler(a.handler.function(deletePrivilegedPolicyFunction))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  createApprovalPolicyWithAVP: a
+    .mutation()
+    .arguments({
+      permissionSetArn: a.string().required(),
+      permissionSetName: a.string(),
+      principalType: a.ref("PrincipalType"),
+      principalId: a.string().required(),
+      principalDisplayName: a.string(),
+    })
+    .returns(a.ref("ApprovalPolicy"))
+    .handler(a.handler.function(createApprovalPolicyFunction))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  deleteApprovalPolicyWithAVP: a
+    .mutation()
+    .arguments({ id: a.string().required() })
+    .returns(a.boolean())
+    .handler(a.handler.function(deleteApprovalPolicyFunction))
     .authorization((allow) => [allow.group("Admins")]),
 
   // Starts the privileged-access workflow: persists the request in the
@@ -263,12 +291,14 @@ const schema = a.schema({
     .handler(a.handler.function(requestAccessFunction))
     .authorization((allow) => [allow.authenticated()]),
 
-  // Returns PENDING_APPROVAL requests the calling admin is configured to approve.
+  // Returns PENDING_APPROVAL requests the calling user is authorized to approve
+  // (via AVP IsAuthorized on Snitch::PermissionSet). Available to any authenticated
+  // user so non-admin approvers can access the page.
   listPendingApprovals: a
     .query()
     .returns(a.ref("AccessRequestItem").array())
     .handler(a.handler.function(listPendingApprovalsFunction))
-    .authorization((allow) => [allow.group("Admins")]),
+    .authorization((allow) => [allow.authenticated()]),
 
   approveRequest: a
     .mutation()
@@ -278,7 +308,7 @@ const schema = a.schema({
     })
     .returns(a.ref("AccessRequestItem"))
     .handler(a.handler.function(approveRequestFunction))
-    .authorization((allow) => [allow.group("Admins")]),
+    .authorization((allow) => [allow.authenticated()]),
 
   rejectRequest: a
     .mutation()
@@ -288,7 +318,7 @@ const schema = a.schema({
     })
     .returns(a.ref("AccessRequestItem"))
     .handler(a.handler.function(rejectRequestFunction))
-    .authorization((allow) => [allow.group("Admins")]),
+    .authorization((allow) => [allow.authenticated()]),
 
   // Returns every access request across all users, newest first. Admin-only.
   listAllAccessRequests: a

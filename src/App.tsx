@@ -6,6 +6,7 @@ import SideNavigation, { SideNavigationProps } from "@cloudscape-design/componen
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 
 import { AdminGuard } from "./components/AdminGuard";
+import { ApprovalPolicyPage } from "./pages/ApprovalPolicyPage";
 import { ApproveRequestsPage } from "./pages/ApproveRequestsPage";
 import { ElevatedAccessPage } from "./pages/ElevatedAccessPage";
 import { PrivilegedPoliciesPage } from "./pages/PrivilegedPoliciesPage";
@@ -13,13 +14,14 @@ import { RequestAccessPage } from "./pages/RequestAccessPage";
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Request Access", href: "#/" },
+  { type: "link", text: "Approve Requests", href: "#/approve-requests" },
   {
     type: "section",
     text: "Administration",
     defaultExpanded: true,
     items: [
-      { type: "link", text: "Approve Requests", href: "#/approve-requests" },
       { type: "link", text: "Privileged Policies", href: "#/privileged-policies" },
+      { type: "link", text: "Approval Policies", href: "#/approval-policies" },
       { type: "link", text: "Elevated Access", href: "#/elevated-access" },
     ],
   },
@@ -70,19 +72,20 @@ function App() {
         content={
           <Routes>
             <Route path="/" element={<RequestAccessPage />} />
-            <Route
-              path="/approve-requests"
-              element={
-                <AdminGuard>
-                  <ApproveRequestsPage />
-                </AdminGuard>
-              }
-            />
+            <Route path="/approve-requests" element={<ApproveRequestsPage />} />
             <Route
               path="/privileged-policies"
               element={
                 <AdminGuard>
                   <PrivilegedPoliciesPage />
+                </AdminGuard>
+              }
+            />
+            <Route
+              path="/approval-policies"
+              element={
+                <AdminGuard>
+                  <ApprovalPolicyPage />
                 </AdminGuard>
               }
             />
