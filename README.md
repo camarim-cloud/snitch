@@ -4,7 +4,7 @@ Snitch is a **Just-in-Time (JIT) privileged access management** tool for AWS. Ad
 
 ## Tech Stack
 
-- **Frontend**: React 18, Vite, TypeScript, [Cloudscape Design System](https://cloudscape.design/)
+- **Frontend**: React 19, Vite, TypeScript, [Cloudscape Design System](https://cloudscape.design/)
 - **Backend**: AWS Amplify Gen 2 — AppSync (GraphQL), DynamoDB, Cognito, Lambda
 - **Authorization**: AWS Verified Permissions (Cedar policy language)
 - **Access orchestration**: AWS Step Functions + AWS SSO Admin API

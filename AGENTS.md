@@ -16,7 +16,7 @@ A fullstack application for managing privileged access to AWS accounts. Admins d
 
 ## Technology Stack
 
-- **Frontend**: React 18 + TypeScript, Vite, Cloudscape Design System, React Router v7
+- **Frontend**: React 19 + TypeScript, Vite, Cloudscape Design System, React Router v7
 - **Backend**: AWS Amplify Gen 2 (AppSync GraphQL + DynamoDB + Cognito)
 - **Authorization**: AWS Verified Permissions (Cedar policies, STRICT schema validation)
 - **Testing**: Vitest + React Testing Library (jsdom environment)
