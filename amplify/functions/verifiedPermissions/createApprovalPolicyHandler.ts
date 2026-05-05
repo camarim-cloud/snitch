@@ -15,46 +15,52 @@ const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }
 const avp = new VerifiedPermissionsClient({ region: REGION });
 
 type CreateInput = {
-  permissionSetArn: string;
-  permissionSetName?: string | null;
+  accountId: string;
+  accountName?: string | null;
   principalType?: "USER" | "GROUP" | null;
   principalId: string;
   principalDisplayName?: string | null;
+  permissionSetArns?: string[] | null;
+  permissionSetNames?: string[] | null;
 };
 
 type AppSyncEvent = { arguments: CreateInput };
 
 /**
  * AppSync mutation resolver that creates an ApprovalPolicy record.
- * Uses GetItem on the composite primary key (permissionSetArn + principalKey)
+ * Uses GetItem on the composite primary key (accountId + principalKey)
  * for an O(1) duplicate check before touching AVP.
  * Writes AVP first, then DDB. Rolls back the AVP policy if the DDB write fails.
  */
 export const handler = async (event: AppSyncEvent) => {
   const {
-    permissionSetArn,
-    permissionSetName,
+    accountId,
+    accountName,
     principalType,
     principalId,
     principalDisplayName,
+    permissionSetArns,
+    permissionSetNames,
   } = event.arguments;
 
   const resolvedPrincipalType = principalType ?? "USER";
+  const resolvedPermissionSetArns = permissionSetArns ?? [];
   const principalKey = `${resolvedPrincipalType}#${principalId}`;
 
   const existing = await dynamo.send(
-    new GetCommand({ TableName: TABLE_NAME, Key: { permissionSetArn, principalKey } })
+    new GetCommand({ TableName: TABLE_NAME, Key: { accountId, principalKey } })
   );
   if (existing.Item) {
     throw new Error(
-      `An approval policy already exists for this approver on permission set ${permissionSetArn}`
+      `An approval policy already exists for this approver on account ${accountId}`
     );
   }
 
   const cedarPolicy = buildApprovalCedarPolicy({
     principalType: resolvedPrincipalType,
     principalId,
-    permissionSetArn,
+    accountId,
+    permissionSetArns: resolvedPermissionSetArns,
   });
 
   const createPolicyResult = await avp.send(
@@ -63,7 +69,7 @@ export const handler = async (event: AppSyncEvent) => {
       definition: {
         static: {
           statement: cedarPolicy,
-          description: `approve: ${resolvedPrincipalType}/${principalId} → ${permissionSetArn}`,
+          description: `approve: ${resolvedPrincipalType}/${principalId} → ${accountId}`,
         },
       },
     })
@@ -73,12 +79,14 @@ export const handler = async (event: AppSyncEvent) => {
   const now = new Date().toISOString();
 
   const item = {
-    permissionSetArn,
+    accountId,
     principalKey,
-    permissionSetName: permissionSetName ?? null,
+    accountName: accountName ?? null,
     principalType: resolvedPrincipalType,
     principalId,
     principalDisplayName: principalDisplayName ?? null,
+    permissionSetArns: resolvedPermissionSetArns,
+    permissionSetNames: permissionSetNames ?? [],
     avpPolicyId,
     createdAt: now,
     updatedAt: now,

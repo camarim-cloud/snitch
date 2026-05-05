@@ -144,7 +144,7 @@ for (const fn of [
 // Cedar schema for the Snitch namespace:
 //   assume — principal: User (IDC) | Group (IDC); resource: Account | OU; context: permissionSetArn
 //   approve — principal: Approver (Cognito username) | ApproverGroup (Cognito group name);
-//             resource: PermissionSet (ARN); no context required
+//             resource: Account (AWS account ID); context: permissionSetArn (enforced in `when` clause)
 const cedarSchema = {
   Snitch: {
     entityTypes: {
@@ -154,7 +154,6 @@ const cedarSchema = {
       OU: { memberOfTypes: ["OU"] },
       Approver: { memberOfTypes: ["ApproverGroup"] },
       ApproverGroup: { memberOfTypes: [] },
-      PermissionSet: { memberOfTypes: [] },
     },
     actions: {
       assume: {
@@ -172,7 +171,13 @@ const cedarSchema = {
       approve: {
         appliesTo: {
           principalTypes: ["Approver", "ApproverGroup"],
-          resourceTypes: ["PermissionSet"],
+          resourceTypes: ["Account"],
+          context: {
+            type: "Record",
+            attributes: {
+              permissionSetArn: { type: "String", required: true },
+            },
+          },
         },
       },
     },

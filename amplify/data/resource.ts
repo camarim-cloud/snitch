@@ -47,19 +47,21 @@ const schema = a.schema({
     })
     .authorization((allow) => [allow.group("Admins")]),
 
-  // Hash key: permissionSetArn, sort key: principalKey ("${principalType}#${principalId}").
+  // Hash key: accountId, sort key: principalKey ("${principalType}#${principalId}").
   // The composite primary key enables O(1) GetItem duplicate checks with no GSI or scan.
   ApprovalPolicy: a
     .model({
-      permissionSetArn: a.string().required(),
+      accountId: a.string().required(),
       principalKey: a.string().required(),
-      permissionSetName: a.string(),
+      accountName: a.string(),
       principalType: a.ref("PrincipalType"),
       principalId: a.string(),
       principalDisplayName: a.string(),
+      permissionSetArns: a.string().array(),
+      permissionSetNames: a.string().array(),
       avpPolicyId: a.string(),
     })
-    .identifier(["permissionSetArn", "principalKey"])
+    .identifier(["accountId", "principalKey"])
     .authorization((allow) => [allow.group("Admins")]),
 
   // Custom types returned by Lambda queries
@@ -257,11 +259,13 @@ const schema = a.schema({
   createApprovalPolicyWithAVP: a
     .mutation()
     .arguments({
-      permissionSetArn: a.string().required(),
-      permissionSetName: a.string(),
+      accountId: a.string().required(),
+      accountName: a.string(),
       principalType: a.ref("PrincipalType"),
       principalId: a.string().required(),
       principalDisplayName: a.string(),
+      permissionSetArns: a.string().array(),
+      permissionSetNames: a.string().array(),
     })
     .returns(a.ref("ApprovalPolicy"))
     .handler(a.handler.function(createApprovalPolicyFunction))
@@ -270,7 +274,7 @@ const schema = a.schema({
   deleteApprovalPolicyWithAVP: a
     .mutation()
     .arguments({
-      permissionSetArn: a.string().required(),
+      accountId: a.string().required(),
       principalKey: a.string().required(),
     })
     .returns(a.boolean())

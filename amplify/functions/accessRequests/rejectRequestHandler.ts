@@ -53,7 +53,7 @@ export const handler = async (event: AppSyncEvent) => {
     );
   }
 
-  await assertIsAuthorizedApprover(request.permissionSetArn, approverUsername, callerGroups);
+  await assertIsAuthorizedApprover(request.accountId, request.permissionSetArn, approverUsername, callerGroups);
 
   const now = new Date().toISOString();
 
@@ -96,6 +96,7 @@ export const handler = async (event: AppSyncEvent) => {
 };
 
 async function assertIsAuthorizedApprover(
+  accountId: string,
   permissionSetArn: string,
   callerUsername: string,
   callerGroups: string[]
@@ -105,7 +106,10 @@ async function assertIsAuthorizedApprover(
       policyStoreId: POLICY_STORE_ID,
       principal: { entityType: "Snitch::Approver", entityId: callerUsername },
       action: { actionType: "Snitch::Action", actionId: "approve" },
-      resource: { entityType: "Snitch::PermissionSet", entityId: permissionSetArn },
+      resource: { entityType: "Snitch::Account", entityId: accountId },
+      context: {
+        contextMap: { permissionSetArn: { string: permissionSetArn } },
+      },
       entities: {
         entityList: [
           {

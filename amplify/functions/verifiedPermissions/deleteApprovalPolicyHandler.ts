@@ -12,22 +12,22 @@ const TABLE_NAME = process.env.APPROVAL_POLICY_TABLE_NAME!;
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const avp = new VerifiedPermissionsClient({ region: REGION });
 
-type DeleteInput = { permissionSetArn: string; principalKey: string };
+type DeleteInput = { accountId: string; principalKey: string };
 type AppSyncEvent = { arguments: DeleteInput };
 
 /**
  * AppSync mutation resolver that deletes an ApprovalPolicy record.
- * The composite key (permissionSetArn + principalKey) drives the GetItem and DeleteItem
+ * The composite key (accountId + principalKey) drives the GetItem and DeleteItem
  * calls directly — no scan or secondary index needed.
  * Deletes DynamoDB first, then AVP (compensating-transaction order).
  */
 export const handler = async (event: AppSyncEvent) => {
-  const { permissionSetArn, principalKey } = event.arguments;
-  const key = { permissionSetArn, principalKey };
+  const { accountId, principalKey } = event.arguments;
+  const key = { accountId, principalKey };
 
   const getResult = await dynamo.send(new GetCommand({ TableName: TABLE_NAME, Key: key }));
   if (!getResult.Item) {
-    throw new Error(`ApprovalPolicy not found: ${permissionSetArn} / ${principalKey}`);
+    throw new Error(`ApprovalPolicy not found: ${accountId} / ${principalKey}`);
   }
 
   const { avpPolicyId } = getResult.Item;

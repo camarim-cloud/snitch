@@ -5,9 +5,9 @@ import type { SelectProps } from "@cloudscape-design/components/select";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 
 import Alert from "@cloudscape-design/components/alert";
+import Autosuggest from "@cloudscape-design/components/autosuggest";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
-import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import FormField from "@cloudscape-design/components/form-field";
@@ -23,9 +23,14 @@ import TextFilter from "@cloudscape-design/components/text-filter";
 
 const client = generateClient<Schema>();
 
-type Policy = Schema["PrivilegedPolicy"]["type"];
 type ApprovalPolicy = Schema["ApprovalPolicy"]["type"];
 type Option = SelectProps.Option;
+
+type AccountRow = {
+  accountId: string;
+  accountName: string;
+  approvers: ApprovalPolicy[];
+};
 
 const PRINCIPAL_TYPE_OPTIONS: Option[] = [
   { label: "User", value: "USER" },
@@ -34,78 +39,121 @@ const PRINCIPAL_TYPE_OPTIONS: Option[] = [
 
 const PAGE_SIZE = 10;
 
+function groupByAccount(policies: ApprovalPolicy[]): AccountRow[] {
+  const map = new Map<string, AccountRow>();
+  for (const p of policies) {
+    if (!p.accountId) continue;
+    const existing = map.get(p.accountId);
+    if (existing) {
+      existing.approvers.push(p);
+    } else {
+      map.set(p.accountId, {
+        accountId: p.accountId,
+        accountName: p.accountName ?? p.accountId,
+        approvers: [p],
+      });
+    }
+  }
+  return [...map.values()];
+}
+
 export function ApprovalPolicyPage() {
-  const [policies, setPolicies] = useState<Policy[]>([]);
   const [approvalPolicies, setApprovalPolicies] = useState<ApprovalPolicy[]>([]);
-  const [loadingPolicies, setLoadingPolicies] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   const [addModalOpen, setAddModalOpen] = useState(false);
-  const [modalPermissionSetArn, setModalPermissionSetArn] = useState("");
-  const [modalPermissionSetName, setModalPermissionSetName] = useState("");
+  const [modalAccountId, setModalAccountId] = useState("");
+  const [modalAccountName, setModalAccountName] = useState("");
+  const [modalPermissionSets, setModalPermissionSets] = useState<readonly Option[]>([]);
   const [modalPrincipalType, setModalPrincipalType] = useState<Option>(PRINCIPAL_TYPE_OPTIONS[0]);
   const [modalPrincipals, setModalPrincipals] = useState<readonly Option[]>([]);
-  const [modalOptions, setModalOptions] = useState<Option[]>([]);
-  const [loadingModalOptions, setLoadingModalOptions] = useState(false);
+  const [accountSuggestions, setAccountSuggestions] = useState<Option[]>([]);
+  const [permissionSetOptions, setPermissionSetOptions] = useState<Option[]>([]);
+  const [principalOptions, setPrincipalOptions] = useState<Option[]>([]);
+  const [loadingPrincipalOptions, setLoadingPrincipalOptions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const requiresApprovalPolicies = policies.filter((p) => p.requiresApproval);
+  const accounts = groupByAccount(approvalPolicies);
 
   const {
-    items: policyItems,
+    items: accountItems,
     filterProps,
     paginationProps,
     collectionProps,
     filteredItemsCount,
-  } = useCollection(requiresApprovalPolicies, {
+  } = useCollection(accounts, {
     filtering: {
       filteringFunction: (item, text) =>
-        item.name.toLowerCase().includes(text.toLowerCase()),
+        item.accountId.includes(text) ||
+        item.accountName.toLowerCase().includes(text.toLowerCase()),
       empty: (
         <Box textAlign="center" color="inherit">
-          <b>No policies require approval</b>
+          <b>No approval policies configured</b>
           <Box padding={{ bottom: "s" }} variant="p" color="inherit">
-            Enable "Require approval" on a Privileged Policy to configure approvers here.
+            Add an approver to get started.
           </Box>
         </Box>
       ),
       noMatch: (
         <Box textAlign="center" color="inherit">
-          No policies match the current filter
+          No accounts match the current filter.
         </Box>
       ),
     },
     pagination: { pageSize: PAGE_SIZE },
-    selection: { trackBy: "id" },
+    selection: { trackBy: "accountId" },
   });
 
-  const selectedPolicies = collectionProps.selectedItems as Policy[];
-  const selectedPolicy = selectedPolicies[0] ?? null;
+  // Derive selectedAccount from the current accounts array (not from the stale
+  // collectionProps.selectedItems references) so the side panel always reflects
+  // the latest approvalPolicies state after an add or delete.
+  const selectedAccountId = (collectionProps.selectedItems as AccountRow[])[0]?.accountId ?? null;
+  const selectedAccount = selectedAccountId
+    ? (accounts.find((a) => a.accountId === selectedAccountId) ?? null)
+    : null;
 
-  const fetchData = useCallback(async () => {
-    setLoadingPolicies(true);
-    const [policiesRes, approvalRes] = await Promise.all([
-      client.models.PrivilegedPolicy.list({}),
-      client.models.ApprovalPolicy.list({}),
-    ]);
-    setPolicies(policiesRes.data);
-    setApprovalPolicies(approvalRes.data);
-    setLoadingPolicies(false);
+  const fetchApprovalPolicies = useCallback(async () => {
+    setLoading(true);
+    const res = await client.models.ApprovalPolicy.list({});
+    setApprovalPolicies(res.data);
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchApprovalPolicies();
+  }, [fetchApprovalPolicies]);
+
+  const loadModalResources = useCallback(async () => {
+    const [accountsRes, permSetsRes] = await Promise.all([
+      client.queries.listAWSAccounts(),
+      client.queries.listPermissionSets(),
+    ]);
+    setAccountSuggestions(
+      (accountsRes.data ?? []).map((a) => ({
+        value: a?.id ?? "",
+        label: a?.name ?? a?.id ?? "",
+        description: a?.id ?? undefined,
+      }))
+    );
+    setPermissionSetOptions(
+      (permSetsRes.data ?? []).map((ps) => ({
+        value: ps?.arn ?? "",
+        label: ps?.name ?? ps?.arn ?? "",
+        description: ps?.arn ?? undefined,
+      }))
+    );
+  }, []);
 
   const loadPrincipalOptions = useCallback(async (principalType: string) => {
-    setLoadingModalOptions(true);
-    setModalOptions([]);
+    setLoadingPrincipalOptions(true);
+    setPrincipalOptions([]);
     try {
       if (principalType === "USER") {
         const res = await client.queries.listCognitoUsers();
-        setModalOptions(
+        setPrincipalOptions(
           (res.data ?? []).map((u) => ({
             label: u?.displayName ?? u?.email ?? u?.username ?? "",
             value: u?.username ?? "",
@@ -114,7 +162,7 @@ export function ApprovalPolicyPage() {
         );
       } else {
         const res = await client.queries.listCognitoGroups();
-        setModalOptions(
+        setPrincipalOptions(
           (res.data ?? []).map((g) => ({
             label: g?.groupName ?? "",
             value: g?.groupName ?? "",
@@ -123,17 +171,19 @@ export function ApprovalPolicyPage() {
         );
       }
     } finally {
-      setLoadingModalOptions(false);
+      setLoadingPrincipalOptions(false);
     }
   }, []);
 
-  function openAddModal(permissionSetArn: string, permissionSetName: string) {
-    setModalPermissionSetArn(permissionSetArn);
-    setModalPermissionSetName(permissionSetName);
+  function openAddModal(prefillAccountId?: string, prefillAccountName?: string) {
+    setModalAccountId(prefillAccountId ?? "");
+    setModalAccountName(prefillAccountName ?? "");
+    setModalPermissionSets([]);
     setModalPrincipalType(PRINCIPAL_TYPE_OPTIONS[0]);
     setModalPrincipals([]);
     setSubmitError(null);
     setAddModalOpen(true);
+    loadModalResources();
     loadPrincipalOptions("USER");
   }
 
@@ -143,22 +193,40 @@ export function ApprovalPolicyPage() {
     await loadPrincipalOptions(option.value ?? "USER");
   }
 
+  function resolveAccountName(id: string): string {
+    const match = accountSuggestions.find((s) => s.value === id);
+    return match?.label ?? id;
+  }
+
   async function handleAddApprovers() {
+    if (!modalAccountId.trim()) {
+      setSubmitError("Enter an account ID.");
+      return;
+    }
+    if (modalPermissionSets.length === 0) {
+      setSubmitError("Select at least one permission set.");
+      return;
+    }
     if (modalPrincipals.length === 0) {
       setSubmitError("Select at least one user or group.");
       return;
     }
     setSubmitting(true);
     setSubmitError(null);
+    const accountName = modalAccountName || resolveAccountName(modalAccountId);
+    const permissionSetArns = modalPermissionSets.map((ps) => ps.value ?? "");
+    const permissionSetNames = modalPermissionSets.map((ps) => ps.label ?? ps.value ?? "");
     try {
       await Promise.all(
         modalPrincipals.map((p) =>
           client.mutations.createApprovalPolicyWithAVP({
-            permissionSetArn: modalPermissionSetArn,
-            permissionSetName: modalPermissionSetName || undefined,
+            accountId: modalAccountId.trim(),
+            accountName: accountName || undefined,
             principalType: (modalPrincipalType.value ?? "USER") as "USER" | "GROUP",
             principalId: p.value ?? "",
             principalDisplayName: p.label ?? "",
+            permissionSetArns,
+            permissionSetNames,
           })
         )
       );
@@ -172,22 +240,23 @@ export function ApprovalPolicyPage() {
     }
   }
 
-  async function handleDeleteApprover(permissionSetArn: string, principalKey: string) {
-    const compositeKey = `${permissionSetArn}#${principalKey}`;
+  async function handleDeleteApprover(accountId: string, principalKey: string) {
+    const compositeKey = `${accountId}#${principalKey}`;
     setDeletingId(compositeKey);
     try {
-      await client.mutations.deleteApprovalPolicyWithAVP({ permissionSetArn, principalKey });
+      await client.mutations.deleteApprovalPolicyWithAVP({ accountId, principalKey });
       setApprovalPolicies((prev) =>
-        prev.filter((a) => !(a.permissionSetArn === permissionSetArn && a.principalKey === principalKey))
+        prev.filter((a) => !(a.accountId === accountId && a.principalKey === principalKey))
       );
     } finally {
       setDeletingId(null);
     }
   }
 
-  const counterText = filteredItemsCount !== undefined
-    ? `(${filteredItemsCount} / ${requiresApprovalPolicies.length})`
-    : `(${requiresApprovalPolicies.length})`;
+  const counterText =
+    filteredItemsCount !== undefined
+      ? `(${filteredItemsCount} / ${accounts.length})`
+      : `(${accounts.length})`;
 
   return (
     <>
@@ -195,7 +264,7 @@ export function ApprovalPolicyPage() {
         header={
           <Header
             variant="h1"
-            description="Configure who can approve access requests for each permission set"
+            description="Configure who can approve access requests per AWS account"
           >
             Approval Policies
           </Header>
@@ -205,33 +274,32 @@ export function ApprovalPolicyPage() {
           <Table
             {...collectionProps}
             selectionType="single"
-            loading={loadingPolicies}
-            loadingText="Loading policies..."
+            loading={loading}
+            loadingText="Loading approval policies..."
             columnDefinitions={[
               {
-                id: "name",
-                header: "Policy name",
-                cell: (item) => item.name,
-                sortingField: "name",
+                id: "accountName",
+                header: "Account",
+                cell: (item) => item.accountName,
+                sortingField: "accountName",
               },
               {
-                id: "principal",
-                header: "Principal",
-                cell: (item) =>
-                  `${item.principalType === "GROUP" ? "Group" : "User"}: ${item.principalDisplayName ?? item.principalId}`,
+                id: "accountId",
+                header: "Account ID",
+                cell: (item) => item.accountId,
+                sortingField: "accountId",
               },
               {
-                id: "permissionSets",
-                header: "Permission sets",
-                cell: (item) =>
-                  item.permissionSetNames?.filter(Boolean).join(", ") || "-",
+                id: "approverCount",
+                header: "Approvers",
+                cell: (item) => item.approvers.length,
               },
             ]}
-            items={policyItems}
+            items={accountItems}
             filter={
               <TextFilter
                 {...filterProps}
-                filteringPlaceholder="Find by policy name"
+                filteringPlaceholder="Find by account name or ID"
                 countText={
                   filteredItemsCount !== undefined
                     ? `${filteredItemsCount} match${filteredItemsCount !== 1 ? "es" : ""}`
@@ -241,18 +309,25 @@ export function ApprovalPolicyPage() {
             }
             pagination={<Pagination {...paginationProps} />}
             header={
-              <Header variant="h2" counter={counterText}>
-                Policies requiring approval
+              <Header
+                variant="h2"
+                counter={counterText}
+                actions={
+                  <Button iconName="add-plus" onClick={() => openAddModal()}>
+                    Add approver
+                  </Button>
+                }
+              >
+                Accounts with approval policies
               </Header>
             }
           />
 
-          {selectedPolicy && (
-            <ApprovalConfigPanel
-              policy={selectedPolicy}
-              approvalPolicies={approvalPolicies}
+          {selectedAccount && (
+            <AccountApproversPanel
+              account={selectedAccount}
               deletingId={deletingId}
-              onAddApprover={openAddModal}
+              onAddApprover={() => openAddModal(selectedAccount.accountId, selectedAccount.accountName)}
               onDeleteApprover={handleDeleteApprover}
             />
           )}
@@ -262,7 +337,7 @@ export function ApprovalPolicyPage() {
       <Modal
         visible={addModalOpen}
         onDismiss={() => setAddModalOpen(false)}
-        header={`Add approvers — ${modalPermissionSetName || modalPermissionSetArn}`}
+        header="Add approver"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
@@ -278,6 +353,35 @@ export function ApprovalPolicyPage() {
       >
         <SpaceBetween size="m">
           {submitError && <Alert type="error">{submitError}</Alert>}
+          <FormField
+            label="Account"
+            description="The AWS account ID the approver can approve requests for."
+          >
+            <Autosuggest
+              value={modalAccountId}
+              onChange={({ detail }) => {
+                setModalAccountId(detail.value);
+                const match = accountSuggestions.find((s) => s.value === detail.value);
+                if (match) setModalAccountName(match.label ?? "");
+              }}
+              options={accountSuggestions}
+              enteredTextLabel={(v) => `Use "${v}"`}
+              placeholder="Account ID or name"
+            />
+          </FormField>
+          <FormField
+            label="Permission sets"
+            description="The approver can only approve requests that use one of these permission sets on this account."
+          >
+            <Multiselect
+              selectedOptions={modalPermissionSets}
+              onChange={({ detail }) => setModalPermissionSets(detail.selectedOptions)}
+              options={permissionSetOptions}
+              filteringType="auto"
+              placeholder="Select permission sets"
+              empty="No permission sets found"
+            />
+          </FormField>
           <FormField label="Principal type">
             <Select
               selectedOption={modalPrincipalType}
@@ -289,17 +393,17 @@ export function ApprovalPolicyPage() {
             label={modalPrincipalType.value === "GROUP" ? "Groups" : "Users"}
             description={
               modalPrincipalType.value === "GROUP"
-                ? "Cognito groups whose members can approve requests for this permission set."
-                : "Cognito users who can approve requests for this permission set."
+                ? "Cognito groups whose members can approve requests for this account."
+                : "Cognito users who can approve requests for this account."
             }
           >
-            {loadingModalOptions ? (
+            {loadingPrincipalOptions ? (
               <Spinner />
             ) : (
               <Multiselect
                 selectedOptions={modalPrincipals}
                 onChange={({ detail }) => setModalPrincipals(detail.selectedOptions)}
-                options={modalOptions}
+                options={principalOptions}
                 filteringType="auto"
                 placeholder={`Select ${modalPrincipalType.value === "GROUP" ? "groups" : "users"}`}
                 empty="No results found"
@@ -312,78 +416,21 @@ export function ApprovalPolicyPage() {
   );
 }
 
-type ApprovalConfigPanelProps = {
-  policy: Policy;
-  approvalPolicies: ApprovalPolicy[];
+type AccountApproversPanelProps = {
+  account: AccountRow;
   deletingId: string | null;
-  onAddApprover: (permissionSetArn: string, permissionSetName: string) => void;
-  onDeleteApprover: (permissionSetArn: string, principalKey: string) => void;
+  onAddApprover: () => void;
+  onDeleteApprover: (accountId: string, principalKey: string) => void;
 };
 
-function ApprovalConfigPanel({
-  policy,
-  approvalPolicies,
+function AccountApproversPanel({
+  account,
   deletingId,
   onAddApprover,
   onDeleteApprover,
-}: ApprovalConfigPanelProps) {
-  const permissionSets: { arn: string; name: string }[] = (policy.permissionSetArns ?? []).map(
-    (arn, i) => ({
-      arn: arn ?? "",
-      name: policy.permissionSetNames?.[i] ?? arn ?? "",
-    })
-  );
-
-  return (
-    <Container
-      header={
-        <Header variant="h2">
-          Approval configurations — {policy.name}
-        </Header>
-      }
-    >
-      <SpaceBetween size="l">
-        {permissionSets.length === 0 ? (
-          <Box color="text-body-secondary">This policy has no permission sets configured.</Box>
-        ) : (
-          <ColumnLayout columns={1} borders="horizontal">
-            {permissionSets.map((ps) => (
-              <PermissionSetApprovers
-                key={ps.arn}
-                permissionSetArn={ps.arn}
-                permissionSetName={ps.name}
-                approvalPolicies={approvalPolicies.filter((a) => a.permissionSetArn === ps.arn)}
-                deletingId={deletingId}
-                onAdd={() => onAddApprover(ps.arn, ps.name)}
-                onDelete={onDeleteApprover}
-              />
-            ))}
-          </ColumnLayout>
-        )}
-      </SpaceBetween>
-    </Container>
-  );
-}
-
-type PermissionSetApproversProps = {
-  permissionSetArn: string;
-  permissionSetName: string;
-  approvalPolicies: ApprovalPolicy[];
-  deletingId: string | null;
-  onAdd: () => void;
-  onDelete: (permissionSetArn: string, principalKey: string) => void;
-};
-
-function PermissionSetApprovers({
-  permissionSetName,
-  permissionSetArn,
-  approvalPolicies,
-  deletingId,
-  onAdd,
-  onDelete,
-}: PermissionSetApproversProps) {
+}: AccountApproversPanelProps) {
   const { items, filterProps, paginationProps, collectionProps, filteredItemsCount } =
-    useCollection(approvalPolicies, {
+    useCollection(account.approvers, {
       filtering: {
         filteringFunction: (item, text) =>
           (item.principalDisplayName ?? item.principalId ?? "")
@@ -391,7 +438,7 @@ function PermissionSetApprovers({
             .includes(text.toLowerCase()),
         empty: (
           <Box textAlign="center" color="inherit">
-            No approvers configured for this permission set.
+            No approvers configured for this account.
           </Box>
         ),
         noMatch: (
@@ -404,7 +451,18 @@ function PermissionSetApprovers({
     });
 
   return (
-    <SpaceBetween size="s">
+    <Container
+      header={
+        <Header variant="h2">
+          Approvers — {account.accountName}
+          {account.accountName !== account.accountId && (
+            <Box variant="span" color="text-body-secondary" fontSize="body-s">
+              {" "}({account.accountId})
+            </Box>
+          )}
+        </Header>
+      }
+    >
       <Table
         {...collectionProps}
         columnDefinitions={[
@@ -420,13 +478,21 @@ function PermissionSetApprovers({
             cell: (item) => item.principalDisplayName ?? item.principalId ?? "-",
           },
           {
+            id: "permissionSets",
+            header: "Permission sets",
+            cell: (item) =>
+              (item.permissionSetNames ?? []).filter(Boolean).join(", ") ||
+              (item.permissionSetArns ?? []).filter(Boolean).join(", ") ||
+              "-",
+          },
+          {
             id: "actions",
             header: "",
             cell: (item) => (
               <Button
                 variant="inline-link"
-                loading={deletingId === `${item.permissionSetArn}#${item.principalKey}`}
-                onClick={() => onDelete(item.permissionSetArn, item.principalKey)}
+                loading={deletingId === `${item.accountId}#${item.principalKey}`}
+                onClick={() => onDeleteApprover(item.accountId, item.principalKey)}
               >
                 Remove
               </Button>
@@ -450,17 +516,16 @@ function PermissionSetApprovers({
         header={
           <Header
             variant="h3"
-            description={permissionSetArn}
             actions={
-              <Button onClick={onAdd} iconName="add-plus">
+              <Button onClick={onAddApprover} iconName="add-plus">
                 Add approver
               </Button>
             }
           >
-            {permissionSetName}
+            Approvers
           </Header>
         }
       />
-    </SpaceBetween>
+    </Container>
   );
 }
