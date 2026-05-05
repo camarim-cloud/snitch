@@ -54,6 +54,12 @@ export const handler = async (event: AppSyncEvent) => {
     );
   }
 
+  // requesterCognitoSub is stored at request-creation time; both sides are
+  // Cognito subs from the access token, so no email claim is needed.
+  if (request.requesterCognitoSub && approverUsername === request.requesterCognitoSub) {
+    throw new Error("You cannot approve your own access request");
+  }
+
   await assertIsAuthorizedApprover(request.accountId, request.permissionSetArn, approverUsername, callerGroups);
 
   const now = new Date().toISOString();

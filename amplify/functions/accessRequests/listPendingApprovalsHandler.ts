@@ -31,16 +31,23 @@ export const handler = async (event: AppSyncEvent) => {
   const callerUsername = event.identity.username;
   const callerGroups = (event.identity.claims["cognito:groups"] as string[]) ?? [];
 
+  // attribute_type(taskToken, :str) excludes items where taskToken was cleared to NULL
+  // by approveRequestHandler before the Step Function updates the status to ACTIVE.
   const requestScan = await dynamo.send(
     new ScanCommand({
       TableName: TABLE_NAME,
-      FilterExpression: "#s = :s",
+      FilterExpression: "#s = :s AND attribute_type(taskToken, :str)",
       ExpressionAttributeNames: { "#s": "status" },
-      ExpressionAttributeValues: { ":s": "PENDING_APPROVAL" },
+      ExpressionAttributeValues: { ":s": "PENDING_APPROVAL", ":str": "S" },
     })
   );
 
-  const requests = requestScan.Items ?? [];
+  // Filter out requests submitted by the caller — a user must not approve their own request,
+  // even if they are a member of a group configured as an approver.
+  const callerEmail = (event.identity.claims["email"] as string | undefined)?.toLowerCase();
+  const requests = (requestScan.Items ?? []).filter(
+    (r) => !callerEmail || !r.idcUserEmail || (r.idcUserEmail as string).toLowerCase() !== callerEmail
+  );
   if (requests.length === 0) return [];
 
   // De-duplicate (accountId, permissionSetArn) pairs to minimize AVP calls

@@ -123,7 +123,10 @@ export function ApproveRequestsPage() {
       }
       setModalMode(null);
       setSelectedItems([]);
-      await loadRequests();
+      // Optimistically remove the item so the table updates immediately,
+      // even before the backend status propagates (approve is async via Step Functions).
+      setRequests((prev) => prev.filter((r) => r.id !== selected.id));
+      loadRequests();
     } catch (err) {
       setActionError(
         err instanceof Error ? err.message : "Action failed. Please try again."
@@ -150,6 +153,7 @@ export function ApproveRequestsPage() {
         <SpaceBetween size="m">
           {loadError && (
             <Alert
+              key="load-error"
               type="error"
               header="Failed to load pending requests"
               action={<Button onClick={loadRequests}>Retry</Button>}
@@ -158,7 +162,7 @@ export function ApproveRequestsPage() {
             </Alert>
           )}
 
-          <Table
+          <Table key="requests-table"
             selectionType="single"
             selectedItems={selectedItems}
             onSelectionChange={({ detail }) => setSelectedItems(detail.selectedItems)}
@@ -279,9 +283,9 @@ export function ApproveRequestsPage() {
         }
       >
         <SpaceBetween size="m">
-          {actionError && <Alert type="error">{actionError}</Alert>}
+          {actionError && <Alert key="action-error" type="error">{actionError}</Alert>}
           {selected && (
-            <TextContent>
+            <TextContent key="request-details">
               <p>
                 <strong>IDC User:</strong> {selected.idcUserLabel}
                 <br />
@@ -298,6 +302,7 @@ export function ApproveRequestsPage() {
             </TextContent>
           )}
           <FormField
+            key="comment-field"
             label="Comment — optional"
             description="This comment will be stored with the request record."
           >

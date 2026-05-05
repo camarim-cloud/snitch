@@ -53,6 +53,10 @@ export const handler = async (event: AppSyncEvent) => {
     );
   }
 
+  if (request.requesterCognitoSub && approverUsername === request.requesterCognitoSub) {
+    throw new Error("You cannot reject your own access request");
+  }
+
   await assertIsAuthorizedApprover(request.accountId, request.permissionSetArn, approverUsername, callerGroups);
 
   const now = new Date().toISOString();

@@ -124,15 +124,25 @@ IAM grants and env vars for `data`-stack functions are set in `backend.ts` using
 
 ### Approval authorization — AVP-gated, not Cognito-group-gated
 
-`listPendingApprovals`, `approveRequest`, and `rejectRequest` are authorized with `allow.authenticated()` (any logged-in user can call them). The Lambda handler is the enforcement point: it calls AVP `IsAuthorized` with the caller's Cognito username as a `Snitch::Approver` principal and the request's `permissionSetArn` as a `Snitch::PermissionSet` resource, injecting the caller's Cognito groups as `Snitch::ApproverGroup` parents so group-based approval policies resolve.
+`listPendingApprovals`, `approveRequest`, and `rejectRequest` are authorized with `allow.authenticated()` (any logged-in user can call them). The Lambda handler is the enforcement point: it calls AVP `IsAuthorized` with the caller's Cognito username as a `Snitch::Approver` principal, the request's `accountId` as a `Snitch::Account` resource, and the request's `permissionSetArn` in context — injecting the caller's Cognito groups as `Snitch::ApproverGroup` parents so group-based approval policies resolve.
 
-This means: non-admin users who are configured as approvers (via an `ApprovalPolicy` record) can access the `ApproveRequestsPage` and act on requests for the permission sets they're authorized for. Admins with no `ApprovalPolicy` entries will see an empty list.
+This means: non-admin users who are configured as approvers (via an `ApprovalPolicy` record) can access the `ApproveRequestsPage` and act on requests for the accounts and permission sets they're authorized for. Admins with no `ApprovalPolicy` entries will see an empty list.
 
 The `ApproveRequestsPage` route has **no `AdminGuard`** — it is accessible to all authenticated users.
+
+**AppSync identity — access token, not ID token.** AppSync forwards the Cognito **access token** to Lambda resolvers, not the ID token. The access token's claims only include `sub`, `cognito:groups`, and standard OIDC fields — custom attributes like `email` are absent. Any identity comparison in a Lambda handler must use `event.identity.username` (the Cognito sub/UUID) rather than email claims.
 
 ### `amplify/data/resource.ts` is the GraphQL contract
 
 All AppSync queries/mutations and their Lambda resolvers are declared here. Adding a new Lambda-backed operation requires: (1) a function resource in a `resource.ts` file, (2) an entry in this schema, (3) import + registration in `backend.ts`, and (4) the IAM grants in `backend.ts`.
+
+### `requesterCognitoSub` — self-approval guard on `AccessRequestItem`
+
+`requestAccessHandler` captures `event.identity.username` (the requester's Cognito sub) at request-creation time and stores it as `requesterCognitoSub` on the DDB record. `approveRequestHandler` and `rejectRequestHandler` compare this value against `event.identity.username` of the approver and throw if they match — preventing a user from approving or rejecting their own request.
+
+Email-based comparison does not work here: AppSync forwards access tokens, which never contain the `email` claim (see above). Using the Cognito sub from `identity.username` on both sides guarantees a reliable comparison with no extra API calls.
+
+Old records written before this field was introduced will have `requesterCognitoSub` as `undefined`; both handlers guard the check with `if (request.requesterCognitoSub && ...)` so old items are not affected.
 
 ### `revokeComment` — admin audit field on `AccessRequestItem`
 

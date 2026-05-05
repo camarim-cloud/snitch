@@ -22,10 +22,12 @@ type RequestAccessInput = {
   startTime?: string | null;
 };
 
-type AppSyncEvent = { arguments: RequestAccessInput };
+type AppSyncIdentity = { username: string };
+type AppSyncEvent = { arguments: RequestAccessInput; identity: AppSyncIdentity };
 
 export type AccessRequest = {
   id: string;
+  requesterCognitoSub: string;
   idcUserId: string;
   idcUserEmail: string | null;
   idcUserDisplayName: string | null;
@@ -53,6 +55,7 @@ export type AccessRequest = {
  */
 export const handler = async (event: AppSyncEvent): Promise<AccessRequest> => {
   const args = event.arguments;
+  const requesterCognitoSub = event.identity.username;
 
   if (args.durationMinutes <= 0) {
     throw new Error(
@@ -77,6 +80,7 @@ export const handler = async (event: AppSyncEvent): Promise<AccessRequest> => {
 
   const item: AccessRequest = {
     id,
+    requesterCognitoSub,
     idcUserId: args.idcUserId,
     idcUserEmail: args.idcUserEmail ?? null,
     idcUserDisplayName: args.idcUserDisplayName ?? null,
