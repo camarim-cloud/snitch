@@ -1,9 +1,8 @@
-title: Snitch — Privileged Access Management
+title: Snitch
 description: Just-in-Time privileged access management for AWS accounts.
 theme: just-the-docs
 
-url: ""
-baseurl: ""
+# url: ""
 
 # Build settings
 markdown: kramdown
