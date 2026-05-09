@@ -1,0 +1,63 @@
+title: Snitch — Privileged Access Management
+description: Just-in-Time privileged access management for AWS accounts.
+theme: just-the-docs
+
+url: ""
+baseurl: ""
+
+# Collections
+collections:
+  docs:
+    output: true
+    permalink: /:collection/:name/
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+
+# Search
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 3
+
+# Navigation
+nav_sort: order
+
+# Footer
+footer_content: "Snitch — Privileged Access Management"
+
+# Auxiliary links in the top-right
+aux_links:
+  "GitHub":
+    - "https://github.com/your-org/snitch"
+
+aux_links_new_tab: true
+
+# Color scheme: "light" or "dark"
+color_scheme: light
+
+# Callouts
+callouts_level: quiet
+callouts:
+  highlight:
+    color: yellow
+  important:
+    title: Important
+    color: blue
+  new:
+    title: New
+    color: green
+  note:
+    title: Note
+    color: purple
+  warning:
+    title: Warning
+    color: red
+
+# Exclude from Jekyll build
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
+  - node_modules/
