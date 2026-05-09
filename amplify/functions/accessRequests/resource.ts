@@ -94,3 +94,10 @@ export const revokeAccessFunction = defineFunction({
   timeoutSeconds: 30,
   resourceGroupName: "data",
 });
+
+export const getCloudTrailLogsFunction = defineFunction({
+  name: "getCloudTrailLogs",
+  entry: "./getCloudTrailLogsHandler.ts",
+  timeoutSeconds: 30,
+  resourceGroupName: "data",
+});

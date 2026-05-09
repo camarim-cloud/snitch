@@ -1,8 +1,10 @@
 import { defineBackend } from "@aws-amplify/backend";
 import { CfnUserPoolGroup } from "aws-cdk-lib/aws-cognito";
+import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
 import { CfnPolicyStore } from "aws-cdk-lib/aws-verifiedpermissions";
+import { RemovalPolicy } from "aws-cdk-lib";
 import { setupAccessRequestWorkflow } from "./accessRequestWorkflow";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
@@ -37,7 +39,12 @@ import {
   listPendingApprovalsFunction,
   listAllAccessRequestsFunction,
   revokeAccessFunction,
+  getCloudTrailLogsFunction,
 } from "./functions/accessRequests/resource";
+import {
+  getSettingsFunction,
+  updateSettingsFunction,
+} from "./functions/settings/resource";
 
 const backend = defineBackend({
   auth,
@@ -68,6 +75,9 @@ const backend = defineBackend({
   listPendingApprovalsFunction,
   listAllAccessRequestsFunction,
   revokeAccessFunction,
+  getCloudTrailLogsFunction,
+  getSettingsFunction,
+  updateSettingsFunction,
 });
 
 // ─── Cognito Admins group ─────────────────────────────────────────────────────
@@ -390,4 +400,49 @@ backend.revokeAccessFunction.resources.lambda.addToRolePolicy(sendTaskPolicy);
 (backend.revokeAccessFunction.resources.lambda as LambdaFunction).addEnvironment(
   "ACCESS_REQUEST_TABLE_NAME",
   accessRequestTableName
+);
+
+// ─── App Settings table ───────────────────────────────────────────────────────
+
+const settingsStack = backend.createStack("AppSettingsStack");
+const appSettingsTable = new Table(settingsStack, "AppSettingsTable", {
+  partitionKey: { name: "settingKey", type: AttributeType.STRING },
+  billingMode: BillingMode.PAY_PER_REQUEST,
+  removalPolicy: RemovalPolicy.RETAIN,
+});
+
+const settingsDdbPolicy = new PolicyStatement({
+  effect: Effect.ALLOW,
+  actions: ["dynamodb:GetItem", "dynamodb:PutItem"],
+  resources: [appSettingsTable.tableArn],
+});
+
+for (const fn of [backend.getSettingsFunction, backend.updateSettingsFunction]) {
+  fn.resources.lambda.addToRolePolicy(settingsDdbPolicy);
+  (fn.resources.lambda as LambdaFunction).addEnvironment(
+    "APP_SETTINGS_TABLE_NAME",
+    appSettingsTable.tableName
+  );
+}
+
+// CloudTrail log reader: reads settings to get the log group, then queries CloudWatch Logs.
+backend.getCloudTrailLogsFunction.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["dynamodb:GetItem"],
+    resources: [appSettingsTable.tableArn],
+  })
+);
+backend.getCloudTrailLogsFunction.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    // Scoped to the logs service; the specific log group is determined at runtime
+    // from AppSettingsTable so we cannot scope to a fixed resource ARN here.
+    actions: ["logs:FilterLogEvents"],
+    resources: ["*"],
+  })
+);
+(backend.getCloudTrailLogsFunction.resources.lambda as LambdaFunction).addEnvironment(
+  "APP_SETTINGS_TABLE_NAME",
+  appSettingsTable.tableName
 );

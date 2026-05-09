@@ -11,6 +11,7 @@ import { ApproveRequestsPage } from "./pages/ApproveRequestsPage";
 import { ElevatedAccessPage } from "./pages/ElevatedAccessPage";
 import { PrivilegedPoliciesPage } from "./pages/PrivilegedPoliciesPage";
 import { RequestAccessPage } from "./pages/RequestAccessPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   { type: "link", text: "Request Access", href: "#/" },
@@ -23,6 +24,7 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
       { type: "link", text: "Privileged Policies", href: "#/privileged-policies" },
       { type: "link", text: "Approval Policies", href: "#/approval-policies" },
       { type: "link", text: "Elevated Access", href: "#/elevated-access" },
+      { type: "link", text: "Settings", href: "#/settings" },
     ],
   },
 ];
@@ -94,6 +96,14 @@ function App() {
               element={
                 <AdminGuard>
                   <ElevatedAccessPage />
+                </AdminGuard>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <AdminGuard>
+                  <SettingsPage />
                 </AdminGuard>
               }
             />

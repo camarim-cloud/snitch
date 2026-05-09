@@ -25,7 +25,12 @@ import {
   listPendingApprovalsFunction,
   listAllAccessRequestsFunction,
   revokeAccessFunction,
+  getCloudTrailLogsFunction,
 } from "../functions/accessRequests/resource";
+import {
+  getSettingsFunction,
+  updateSettingsFunction,
+} from "../functions/settings/resource";
 
 const schema = a.schema({
   PrincipalType: a.enum(["USER", "GROUP"]),
@@ -344,6 +349,55 @@ const schema = a.schema({
     .arguments({ requestId: a.string().required(), revokeComment: a.string() })
     .returns(a.ref("AccessRequestItem"))
     .handler(a.handler.function(revokeAccessFunction))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  // ─── App Settings ─────────────────────────────────────────────────────────
+
+  AppSettings: a.customType({
+    cloudTrailLogGroupName: a.string(),
+  }),
+
+  getAppSettings: a
+    .query()
+    .returns(a.ref("AppSettings"))
+    .handler(a.handler.function(getSettingsFunction))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  updateAppSettings: a
+    .mutation()
+    .arguments({ cloudTrailLogGroupName: a.string().required() })
+    .returns(a.ref("AppSettings"))
+    .handler(a.handler.function(updateSettingsFunction))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  // ─── CloudTrail audit logs ─────────────────────────────────────────────────
+
+  CloudTrailLogEvent: a.customType({
+    eventId: a.string(),
+    timestamp: a.string(),
+    eventTime: a.string(),
+    eventName: a.string(),
+    eventSource: a.string(),
+    userIdentityType: a.string(),
+    userIdentityArn: a.string(),
+    sourceIPAddress: a.string(),
+    awsRegion: a.string(),
+    errorCode: a.string(),
+    errorMessage: a.string(),
+    readOnly: a.boolean(),
+  }),
+
+  // Fetches CloudTrail events from the configured CloudWatch log group filtered
+  // by the requester's email (matches userIdentity.arn in AssumedRole sessions).
+  getCloudTrailLogs: a
+    .query()
+    .arguments({
+      startTime: a.string().required(),
+      endTime: a.string().required(),
+      idcUserEmail: a.string().required(),
+    })
+    .returns(a.ref("CloudTrailLogEvent").array())
+    .handler(a.handler.function(getCloudTrailLogsFunction))
     .authorization((allow) => [allow.group("Admins")]),
 });
 

@@ -12,7 +12,8 @@ A fullstack application for managing privileged access to AWS accounts. Admins d
 - JIT access requests with a Step Functions workflow: assign permission set → interruptible wait → revoke
 - Optional approval gate on policies: requests pause at `PENDING_APPROVAL` until a configured approver acts (or the 24-hour timeout fires)
 - Approval Policy management: configure which Cognito users/groups can approve requests per account (with optional permission set conditions); persisted as Cedar `approve` policies in AVP
-- Elevated Access page (admin-only): view all requests across all users and revoke any ACTIVE request early
+- Elevated Access page (admin-only): view all requests across all users, revoke any ACTIVE request early, and inspect the full CloudTrail audit trail for each request window
+- Settings page (admin-only): configure application-level settings such as the CloudWatch log group where CloudTrail delivers audit events
 - Responsive UI built with Cloudscape Design System
 
 ## Technology Stack
@@ -40,9 +41,13 @@ snitch/
 ├── amplify/
 │   ├── auth/resource.ts        # Cognito config; defines the "Admins" user pool group
 │   ├── data/resource.ts        # AppSync schema: PrivilegedPolicy model + AVP-backed mutations
-│   ├── backend.ts              # CDK wiring: AVP policy store, IAM grants, env vars
+│   ├── backend.ts              # CDK wiring: AVP policy store, AppSettingsTable, IAM grants, env vars
 │   └── functions/
 │       ├── awsResources/       # Lambda resolvers: list IDC users/groups, accounts, OUs, permission sets
+│       ├── settings/
+│       │   ├── resource.ts               # Function definitions for getSettings and updateSettings
+│       │   ├── getSettingsHandler.ts     # Reads global settings record from AppSettingsTable
+│       │   └── updateSettingsHandler.ts  # Writes/overwrites global settings record
 │       └── verifiedPermissions/
 │           ├── cedarPolicyBuilder.ts              # Pure function: builds Cedar PERMIT statement (assume)
 │           ├── buildApprovalCedarPolicy.ts        # Pure function: builds Cedar PERMIT statement (approve)
@@ -62,7 +67,8 @@ snitch/
 │   │   ├── ApprovalPolicyPage.tsx      # Admin: configure per-account approvers with permission set conditions
 │   │   ├── RequestAccessPage.tsx       # End-user JIT access request form + request history
 │   │   ├── ApproveRequestsPage.tsx     # Any authenticated approver: review, approve, or reject pending requests
-│   │   └── ElevatedAccessPage.tsx      # Admin page: view all requests, revoke ACTIVE ones early
+│   │   ├── ElevatedAccessPage.tsx      # Admin page: view all requests, revoke ACTIVE ones early, view CloudTrail audit logs
+│   │   └── SettingsPage.tsx            # Admin page: configure app-level settings (CloudTrail log group)
 │   ├── test/
 │   │   └── setup.ts            # Vitest setup (jest-dom matchers)
 │   ├── App.tsx
@@ -163,10 +169,18 @@ AssignPermissionSet → WaitForEarlyRevocation → RemovePermissionSet
 | `listPendingApprovalsHandler.ts` | data | Scans `PENDING_APPROVAL` requests; filters by AVP `IsAuthorized` per unique `(accountId, permissionSetArn)` pair |
 | `listAllAccessRequestsHandler.ts` | data | Returns all requests across all users (admin-only, newest first) |
 | `revokeAccessHandler.ts` | data | Signals `WaitForEarlyRevocation` via `SendTaskSuccess`; persists optional `revokeComment` for audit |
+| `getCloudTrailLogsHandler.ts` | data | Reads configured log group from AppSettingsTable; calls CloudWatch Logs `FilterLogEvents` with email-based filter; returns parsed CloudTrail events |
 
 `approveRequest`, `rejectRequest`, `listPendingApprovals`, `listAllAccessRequests`, `revokeAccess` are in the `data` stack (`resourceGroupName: "data"`) — see `CLAUDE.md` for why.
 
 `createApprovalPolicyHandler.ts` and `deleteApprovalPolicyHandler.ts` are also in the `data` stack (AppSync-backed). They keep the `ApprovalPolicy` DynamoDB table and AVP Cedar policies in sync (create: AVP first → DDB; delete: DDB first → AVP).
+
+### Lambda Handlers (`amplify/functions/settings/`)
+
+| Handler | Stack | Purpose |
+|---|---|---|
+| `getSettingsHandler.ts` | data | Reads the single `settingKey: "global"` record from `AppSettingsTable`; returns `{ cloudTrailLogGroupName }` |
+| `updateSettingsHandler.ts` | data | Puts/overwrites the `settingKey: "global"` record; returns the saved settings |
 
 ## AWS Verified Permissions Integration
 
@@ -256,6 +270,7 @@ permit (
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD handlers + evaluateAccess |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
 | `ACCESS_REQUEST_TABLE_NAME` | All access-request handlers |
+| `APP_SETTINGS_TABLE_NAME` | `getSettingsHandler`, `updateSettingsHandler`, `getCloudTrailLogsHandler` |
 
 ### IAM Permissions
 
@@ -270,6 +285,13 @@ permit (
 **Approve/reject/listPending handlers**:
 - `verifiedpermissions:IsAuthorized` — scoped to policy store ARN
 - `dynamodb:GetItem`, `UpdateItem`, `Scan` — scoped to `AccessRequestTable`
+
+**Settings handlers** (`getSettings`, `updateSettings`):
+- `dynamodb:GetItem`, `PutItem` — scoped to `AppSettingsTable`
+
+**CloudTrail logs handler** (`getCloudTrailLogs`):
+- `dynamodb:GetItem` — scoped to `AppSettingsTable` (reads configured log group at runtime)
+- `logs:FilterLogEvents` — scoped to `*` (log group is dynamic; determined at runtime from settings)
 
 ### Adding Access Evaluation
 
@@ -396,6 +418,8 @@ throw new Error(`Expected PrivilegedPolicy id to be a non-empty string, got: ${J
 - `buildCedarPolicy` must be tested with unit tests covering: USER vs GROUP principal, accounts-only, OUs-only, mixed, empty resource lists.
 - `buildApprovalCedarPolicy` must be tested with unit tests covering: USER vs GROUP principal, single ARN, multiple ARNs, different accounts, different ARN lists.
 - Setup file: `src/test/setup.ts`. Test files: `.test.tsx` suffix.
+- When a Lambda handler reads `process.env.X` at the module level (`const TABLE_NAME = process.env.X!`), set the env var **before** the `await import(...)` statement in the test file so the module-level constant captures the correct value. Tests that check `cmd.input.TableName` or similar will silently receive `undefined` otherwise.
+- When testing components that render multiple Cloudscape modals (e.g. `ElevatedAccessPage` shows both a details modal and a revoke modal), use `screen.getByRole("dialog", { name: /title/i })` rather than `screen.getByRole("dialog")` to avoid ambiguous queries — Cloudscape keeps hidden modals in the DOM.
 
 ## State Management
 - Use React hooks (`useState`, `useReducer`) for local state.

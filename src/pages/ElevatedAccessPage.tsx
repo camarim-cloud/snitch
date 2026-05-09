@@ -9,12 +9,14 @@ import { formatDuration } from "@/utils/duration";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
 import Modal from "@cloudscape-design/components/modal";
 import Pagination from "@cloudscape-design/components/pagination";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Spinner from "@cloudscape-design/components/spinner";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
 import TextContent from "@cloudscape-design/components/text-content";
@@ -25,6 +27,7 @@ import FormField from "@cloudscape-design/components/form-field";
 const client = generateClient<Schema>();
 
 const PAGE_SIZE = 10;
+const LOGS_PAGE_SIZE = 20;
 
 const ALL_STATUSES = [
   "PENDING",
@@ -63,13 +66,21 @@ function statusIndicatorType(status: string): StatusIndicatorProps.Type {
 
 type AccessRequestRow = {
   id: string;
+  idcUserId: string;
+  idcUserEmail: string;
   userLabel: string;
   accountId: string;
+  permissionSetArn: string;
   permissionSetName: string;
   status: string;
   durationMinutes: number;
   createdAt: string;
+  updatedAt: string;
+  startTime: string;
   revokeComment: string;
+  justification: string;
+  approvedBy: string;
+  approverComment: string;
 };
 
 type RawItem = NonNullable<
@@ -79,16 +90,266 @@ type RawItem = NonNullable<
 function toRow(item: NonNullable<RawItem>): AccessRequestRow {
   return {
     id: item.id ?? "",
+    idcUserId: item.idcUserId ?? "",
+    idcUserEmail: item.idcUserEmail ?? "",
     userLabel:
       item.idcUserDisplayName ?? item.idcUserEmail ?? item.idcUserId ?? "",
     accountId: item.accountId ?? "",
+    permissionSetArn: item.permissionSetArn ?? "",
     permissionSetName: item.permissionSetName ?? "",
     status: item.status ?? "",
     durationMinutes: item.durationMinutes ?? 0,
     createdAt: item.createdAt ?? "",
+    updatedAt: item.updatedAt ?? "",
+    startTime: item.startTime ?? "",
     revokeComment: item.revokeComment ?? "",
+    justification: item.justification ?? "",
+    approvedBy: item.approvedBy ?? "",
+    approverComment: item.approverComment ?? "",
   };
 }
+
+// ─── CloudTrail log types ─────────────────────────────────────────────────────
+
+type CloudTrailLogRow = NonNullable<
+  NonNullable<
+    Awaited<ReturnType<typeof client.queries.getCloudTrailLogs>>["data"]
+  >[number]
+>;
+
+// ─── Details modal ────────────────────────────────────────────────────────────
+
+type RequestDetailsModalProps = {
+  request: AccessRequestRow;
+  visible: boolean;
+  onDismiss: () => void;
+};
+
+function RequestDetailsModal({ request, visible, onDismiss }: RequestDetailsModalProps) {
+  const [logs, setLogs] = useState<CloudTrailLogRow[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState("");
+
+  const fetchLogs = useCallback(async () => {
+    if (!request.idcUserEmail) {
+      setLogs([]);
+      return;
+    }
+    setLogsLoading(true);
+    setLogsError("");
+    try {
+      // Use scheduled startTime if present, otherwise fall back to createdAt
+      const startIso = request.startTime || request.createdAt;
+      const endMs = new Date(startIso).getTime() + request.durationMinutes * 60 * 1000;
+      const endIso = new Date(endMs).toISOString();
+
+      const res = await client.queries.getCloudTrailLogs({
+        startTime: startIso,
+        endTime: endIso,
+        idcUserEmail: request.idcUserEmail,
+      });
+      if (res.errors?.length) {
+        throw new Error(res.errors.map((e) => e.message).join("; "));
+      }
+      setLogs(
+        (res.data ?? []).filter((e): e is CloudTrailLogRow => e !== null)
+      );
+    } catch (err) {
+      setLogsError(
+        err instanceof Error ? err.message : "Failed to load CloudTrail logs"
+      );
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [request]);
+
+  useEffect(() => {
+    if (visible) fetchLogs();
+    else {
+      setLogs([]);
+      setLogsError("");
+    }
+  }, [visible, fetchLogs]);
+
+  const {
+    items: logItems,
+    filterProps: logFilterProps,
+    paginationProps: logPaginationProps,
+    collectionProps: logCollectionProps,
+    filteredItemsCount: logFilteredCount,
+  } = useCollection(logs, {
+    filtering: {
+      filteringFunction: (item, text) => {
+        const q = text.toLowerCase();
+        return (
+          (item.eventName ?? "").toLowerCase().includes(q) ||
+          (item.eventSource ?? "").toLowerCase().includes(q) ||
+          (item.userIdentityArn ?? "").toLowerCase().includes(q) ||
+          (item.sourceIPAddress ?? "").toLowerCase().includes(q)
+        );
+      },
+      empty: (
+        <Box textAlign="center" color="inherit">
+          {logsLoading ? <Spinner /> : "No CloudTrail events found for this request window"}
+        </Box>
+      ),
+      noMatch: (
+        <Box textAlign="center" color="inherit">
+          No matches for the current filter
+        </Box>
+      ),
+    },
+    pagination: { pageSize: LOGS_PAGE_SIZE },
+  });
+
+  return (
+    <Modal
+      visible={visible}
+      onDismiss={onDismiss}
+      size="max"
+      header={`Request Details — ${request.userLabel}`}
+    >
+      <SpaceBetween size="l">
+        {/* Request metadata */}
+        <ColumnLayout columns={3} variant="text-grid">
+          <SpaceBetween size="xs">
+            <Box fontWeight="bold" variant="awsui-key-label">User</Box>
+            <Box>{request.userLabel}</Box>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box fontWeight="bold" variant="awsui-key-label">Account ID</Box>
+            <Box>{request.accountId}</Box>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box fontWeight="bold" variant="awsui-key-label">Permission Set</Box>
+            <Box>{request.permissionSetName}</Box>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box fontWeight="bold" variant="awsui-key-label">Status</Box>
+            <StatusIndicator type={statusIndicatorType(request.status)}>
+              {request.status}
+            </StatusIndicator>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box fontWeight="bold" variant="awsui-key-label">Duration</Box>
+            <Box>{formatDuration(request.durationMinutes)}</Box>
+          </SpaceBetween>
+          <SpaceBetween size="xs">
+            <Box fontWeight="bold" variant="awsui-key-label">Requested at</Box>
+            <Box>{request.createdAt}</Box>
+          </SpaceBetween>
+          {request.justification && (
+            <SpaceBetween size="xs">
+              <Box fontWeight="bold" variant="awsui-key-label">Justification</Box>
+              <Box>{request.justification}</Box>
+            </SpaceBetween>
+          )}
+          {request.approvedBy && (
+            <SpaceBetween size="xs">
+              <Box fontWeight="bold" variant="awsui-key-label">Approved by</Box>
+              <Box>{request.approvedBy}</Box>
+            </SpaceBetween>
+          )}
+          {request.revokeComment && (
+            <SpaceBetween size="xs">
+              <Box fontWeight="bold" variant="awsui-key-label">Revoke reason</Box>
+              <Box>{request.revokeComment}</Box>
+            </SpaceBetween>
+          )}
+        </ColumnLayout>
+
+        {/* CloudTrail logs */}
+        {logsError && <Alert type="error">{logsError}</Alert>}
+
+        {!request.idcUserEmail ? (
+          <Alert type="warning">
+            No email address on record for this requester — cannot load CloudTrail logs.
+          </Alert>
+        ) : (
+          <Table
+            {...logCollectionProps}
+            loading={logsLoading}
+            loadingText="Loading CloudTrail events"
+            items={logItems}
+            columnDefinitions={[
+              {
+                id: "eventTime",
+                header: "Event Time",
+                cell: (r) => r.eventTime ?? r.timestamp ?? "",
+                width: 200,
+              },
+              {
+                id: "eventName",
+                header: "Event Name",
+                cell: (r) => r.eventName ?? "",
+              },
+              {
+                id: "eventSource",
+                header: "Event Source",
+                cell: (r) => r.eventSource ?? "",
+              },
+              {
+                id: "userIdentityArn",
+                header: "User Identity",
+                cell: (r) => r.userIdentityArn ?? "",
+              },
+              {
+                id: "sourceIPAddress",
+                header: "Source IP",
+                cell: (r) => r.sourceIPAddress ?? "",
+                width: 140,
+              },
+              {
+                id: "awsRegion",
+                header: "Region",
+                cell: (r) => r.awsRegion ?? "",
+                width: 120,
+              },
+              {
+                id: "error",
+                header: "Error",
+                cell: (r) =>
+                  r.errorCode ? (
+                    <StatusIndicator type="error">{r.errorCode}</StatusIndicator>
+                  ) : (
+                    "—"
+                  ),
+                width: 160,
+              },
+            ]}
+            filter={
+              <TextFilter
+                {...logFilterProps}
+                filteringPlaceholder="Find by event, source or identity"
+                countText={
+                  logFilteredCount !== undefined
+                    ? `${logFilteredCount} match${logFilteredCount !== 1 ? "es" : ""}`
+                    : undefined
+                }
+              />
+            }
+            header={
+              <Header
+                variant="h3"
+                counter={logsLoading ? undefined : `(${logs.length})`}
+                actions={
+                  <Button iconName="refresh" onClick={fetchLogs} loading={logsLoading}>
+                    Refresh
+                  </Button>
+                }
+              >
+                CloudTrail Events
+              </Header>
+            }
+            pagination={<Pagination {...logPaginationProps} />}
+          />
+        )}
+      </SpaceBetween>
+    </Modal>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export function ElevatedAccessPage() {
   const [allRequests, setAllRequests] = useState<AccessRequestRow[]>([]);
@@ -98,6 +359,7 @@ export function ElevatedAccessPage() {
     STATUS_FILTER_OPTIONS[0]
   );
   const [revokeModalOpen, setRevokeModalOpen] = useState(false);
+  const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState("");
   const [revokeComment, setRevokeComment] = useState("");
@@ -292,6 +554,12 @@ export function ElevatedAccessPage() {
                     Refresh
                   </Button>
                   <Button
+                    disabled={!selected}
+                    onClick={() => setDetailsModalOpen(true)}
+                  >
+                    View Details
+                  </Button>
+                  <Button
                     variant="primary"
                     disabled={!canRevoke}
                     onClick={() => {
@@ -310,6 +578,14 @@ export function ElevatedAccessPage() {
           }
           pagination={<Pagination {...paginationProps} />}
         />
+
+        {selected && (
+          <RequestDetailsModal
+            request={selected}
+            visible={detailsModalOpen}
+            onDismiss={() => setDetailsModalOpen(false)}
+          />
+        )}
 
         <Modal
           visible={revokeModalOpen}

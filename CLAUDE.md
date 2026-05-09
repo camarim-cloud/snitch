@@ -119,6 +119,8 @@ Current split:
 | `listAllAccessRequests`, `revokeAccess` | `assignPermissionSet`, `removePermissionSet`, `setStatusFailed` |
 | `requestAccess`, `listAccessRequests` | |
 | `createApprovalPolicy`, `deleteApprovalPolicy` | |
+| `getSettings`, `updateSettings` | |
+| `getCloudTrailLogs` | |
 
 IAM grants and env vars for `data`-stack functions are set in `backend.ts` using the table values returned by `setupAccessRequestWorkflow()`, creating a one-directional dependency (`data` → `AccessRequestWorkflow`) that CloudFormation can resolve.
 
@@ -143,6 +145,24 @@ All AppSync queries/mutations and their Lambda resolvers are declared here. Addi
 Email-based comparison does not work here: AppSync forwards access tokens, which never contain the `email` claim (see above). Using the Cognito sub from `identity.username` on both sides guarantees a reliable comparison with no extra API calls.
 
 Old records written before this field was introduced will have `requesterCognitoSub` as `undefined`; both handlers guard the check with `if (request.requesterCognitoSub && ...)` so old items are not affected.
+
+### App Settings — single-record DynamoDB table
+
+Application-level configuration (e.g. the CloudTrail log group) is stored in `AppSettingsTable`, a CDK-managed DynamoDB table created directly in `backend.ts` via `backend.createStack("AppSettingsStack")`. The table uses `settingKey: STRING` as the partition key and a single record (`settingKey: "global"`) holds all settings fields.
+
+`getAppSettings` / `updateAppSettings` are custom AppSync query/mutation backed by `getSettingsHandler` and `updateSettingsHandler` (both in `amplify/functions/settings/`). They always read/write the `settingKey: "global"` item — there is no pagination or list operation.
+
+### CloudTrail audit trail in Elevated Access
+
+`getCloudTrailLogsHandler` (in `amplify/functions/accessRequests/`) surfaces CloudTrail events for a specific request window:
+
+1. Reads `cloudTrailLogGroupName` from `AppSettingsTable`. Returns `[]` if not configured.
+2. Calls CloudWatch Logs `FilterLogEvents` with:
+   - `startTime` / `endTime` derived from the request's start timestamp + `durationMinutes`
+   - `filterPattern: ?"<idcUserEmail>"` — text search that matches any CloudTrail event whose JSON message contains the requester's email. This catches `AssumedRole` sessions from SSO where `userIdentity.arn` takes the form `arn:aws:sts::ACCOUNT:assumed-role/AWSReservedSSO_PermissionSet_HASH/<email>` — equivalent to CloudTrail Insights `WHERE userIdentity.arn LIKE '%<email>%'`.
+3. Parses each `event.message` as a CloudTrail event (bare JSON or `{Records:[...]}` wrapper), extracts standard fields, and returns up to 1000 events.
+
+The Lambda is granted `logs:FilterLogEvents` on `*` because the log group name is runtime-dynamic (admin-configured). The `ElevatedAccessPage → RequestDetailsModal` opens when an admin clicks "View Details" on a selected request and loads logs using `idcUserEmail` from the `AccessRequestItem`.
 
 ### `revokeComment` — admin audit field on `AccessRequestItem`
 
