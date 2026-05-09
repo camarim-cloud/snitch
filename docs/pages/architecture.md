@@ -56,7 +56,7 @@ All infrastructure is defined in `amplify/` as CDK code and deployed via Amplify
 
 AppSync resolvers reference Lambda ARNs. If approval/revocation Lambdas lived inside `AccessRequestWorkflow`, a circular dependency would form:
 
-- `data` → `AccessRequestWorkflow` (AppSync references Lambda ARNs)  
+- `data` → `AccessRequestWorkflow` (AppSync references Lambda ARNs)
 - `AccessRequestWorkflow` → `data` (needs `PrivilegedPolicyTable` ARN for IAM)
 
 The split breaks the cycle: `AccessRequestWorkflow` exposes `{ accessRequestTableArn, accessRequestTableName }` and `data` (`backend.ts`) imports them — a single direction CloudFormation can resolve.

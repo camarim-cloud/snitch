@@ -49,7 +49,7 @@ Adding a new mutation or query requires changes in four places:
 3. **Backend registration** — import the function in `amplify/backend.ts` and add it to the backend definition.
 4. **IAM grants** — add the required `PolicyStatement` in `amplify/backend.ts` for the function's execution role.
 
-For the stack placement rule, see the [Architecture — Request Handler Placement]({% link _docs/architecture.md %}) section.
+For the stack placement rule, see the [Architecture]({% link pages/architecture.md %}) page.
 
 ---
 

@@ -10,14 +10,14 @@ nav_order: 1
 Just-in-Time (JIT) privileged access management for AWS accounts, built on AWS Amplify, Cedar policies, and Step Functions.
 {: .fs-6 .fw-300 }
 
-[Get Started]({% link _docs/getting-started.md %}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
+[Get Started]({% link pages/getting-started.md %}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/camarim-cloud/snitch){: .btn .fs-5 .mb-4 .mb-md-0 }
 
 ---
 
 ## What is Snitch?
 
-Snitch is a fullstack application for managing privileged access to AWS accounts. Admins define Cedar policies that authorize IAM Identity Center (IDC) users or groups to assume specific Permission Sets on AWS accounts and Organizational Units (OUs). End-users request temporary, time-boxed access through a self-service UI; access is granted automatically by a Step Functions workflow and revoked when the requested duration expires.
+Snitch is a fullstack application for managing privileged access to AWS accounts. Admins define Cedar policies that authorize IAM Identity Center (IDC) users or groups to assume specific Permission Sets on AWS accounts. End-users request temporary, time-boxed access through a self-service UI; access is granted automatically by a Step Functions workflow and revoked when the requested duration expires.
 
 ## Core Features
 

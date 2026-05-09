@@ -32,7 +32,7 @@ Before deploying Snitch, ensure you have the following:
 Clone the repository and install dependencies:
 
 ```bash
-git clone https://github.com/your-org/snitch.git
+git clone https://github.com/camarim-cloud/snitch.git
 cd snitch
 npm install
 ```

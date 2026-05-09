@@ -68,7 +68,7 @@ Both are custom AppSync resolvers backed by Lambda.
 
 ## CloudTrail Log Group Configuration
 
-To enable the audit trail on the [Elevated Access]({% link _docs/elevated-access.md %}) page:
+To enable the audit trail on the [Elevated Access]({% link pages/elevated-access.md %}) page:
 
 1. Ensure CloudTrail is enabled in your AWS account and is configured to deliver events to a CloudWatch Logs log group.
 2. Navigate to **Settings** in the Snitch UI (admin-only).

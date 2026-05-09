@@ -105,7 +105,7 @@ Setting `requiresApproval: true` on a policy activates the approval gate for all
 2. The Request Access form shows an info alert.
 3. On submission, the request is created with `status: "PENDING_APPROVAL"` and the Step Function pauses at the `WaitForApproval` state.
 
-**Who can approve** is configured separately in the [Approval Policies]({% link _docs/approval-workflow.md %}) section.
+**Who can approve** is configured separately in the [Approval Workflow]({% link pages/approval-workflow.md %}) section.
 
 ---
 

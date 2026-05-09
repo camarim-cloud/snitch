@@ -97,6 +97,6 @@ The `revokeComment` argument is optional and written atomically alongside the ta
 The CloudTrail audit trail requires:
 
 1. CloudTrail enabled for the AWS account, delivering events to a CloudWatch log group.
-2. The log group name configured in the [Settings]({% link _docs/settings.md %}) page.
+2. The log group name configured in the [Settings]({% link pages/settings.md %}) page.
 
 Without a configured log group, `getCloudTrailLogs` returns an empty array.
