@@ -54,7 +54,7 @@ export const handler = async (input: AssignInput): Promise<AssignInput> => {
     new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { id: input.requestId },
-      UpdateExpression: "SET #s = :s, updatedAt = :now",
+      UpdateExpression: "SET #s = :s, updatedAt = :now, activatedAt = :now",
       ExpressionAttributeNames: { "#s": "status" },
       ExpressionAttributeValues: {
         ":s": "ACTIVE",

@@ -59,6 +59,8 @@ type AccessRequestRow = {
   createdAt: string;
   updatedAt: string;
   startTime: string;
+  activatedAt: string;
+  deactivatedAt: string;
   revokeComment: string;
   justification: string;
   approvedBy: string;
@@ -84,6 +86,8 @@ function toRow(item: NonNullable<RawItem>): AccessRequestRow {
     createdAt: item.createdAt ?? "",
     updatedAt: item.updatedAt ?? "",
     startTime: item.startTime ?? "",
+    activatedAt: item.activatedAt ?? "",
+    deactivatedAt: item.deactivatedAt ?? "",
     revokeComment: item.revokeComment ?? "",
     justification: item.justification ?? "",
     approvedBy: item.approvedBy ?? "",
@@ -120,10 +124,9 @@ function RequestDetailsModal({ request, visible, onDismiss }: RequestDetailsModa
     setLogsLoading(true);
     setLogsError("");
     try {
-      // Use scheduled startTime if present, otherwise fall back to createdAt
-      const startIso = request.startTime || request.createdAt;
-      const endMs = new Date(startIso).getTime() + request.durationMinutes * 60 * 1000;
-      const endIso = new Date(endMs).toISOString();
+      const startIso = request.activatedAt || request.createdAt;
+      const endIso = request.deactivatedAt ||
+        new Date(new Date(startIso).getTime() + request.durationMinutes * 60 * 1000).toISOString();
 
       const res = await client.queries.getCloudTrailLogs({
         startTime: startIso,

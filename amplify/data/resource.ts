@@ -128,6 +128,8 @@ const schema = a.schema({
     requiresApproval: a.boolean(),
     justification: a.string(),
     startTime: a.string(),
+    activatedAt: a.string(),
+    deactivatedAt: a.string(),
     approvedBy: a.string(),
     approverComment: a.string(),
     revokeComment: a.string(),
@@ -176,7 +178,7 @@ const schema = a.schema({
     .query()
     .returns(a.ref("AWSAccount").array())
     .handler(a.handler.function(listAWSAccountsFunction))
-    .authorization((allow) => [allow.group("Admins")]),
+    .authorization((allow) => [allow.authenticated()]),
 
   listOUs: a
     .query()

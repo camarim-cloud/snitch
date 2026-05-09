@@ -55,7 +55,7 @@ export const handler = async (input: RemoveInput): Promise<void> => {
     new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { id: input.requestId },
-      UpdateExpression: "SET #s = :s, updatedAt = :now",
+      UpdateExpression: "SET #s = :s, updatedAt = :now, deactivatedAt = :now",
       ExpressionAttributeNames: { "#s": "status" },
       ExpressionAttributeValues: {
         ":s": input.revokedByAdmin === true ? "REVOKED" : "EXPIRED",

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
-import { formatDuration } from "@/utils/duration";
+import { formatDuration, todayDateStr } from "@/utils/duration";
 import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 
 import Alert from "@cloudscape-design/components/alert";
@@ -68,12 +68,13 @@ type LoadState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; idcUserId: string; idcUserEmail: string; idcUserDisplayName: string; permitted: NonNullable<PermittedAccess>[] };
+  | { status: "ready"; idcUserId: string; idcUserEmail: string; idcUserDisplayName: string; permitted: NonNullable<PermittedAccess>[]; accountNames: Map<string, string> };
 
 type FormValues = {
   account: SelectProps.Option | null;
   permissionSet: SelectProps.Option | null;
-  durationMinutes: string;
+  durationDate: string;
+  durationTime: string;
   justification: string;
   startTimeDate: string;
   startTimeTime: string;
@@ -82,13 +83,13 @@ type FormValues = {
 type FormErrors = {
   account: string;
   permissionSet: string;
-  durationMinutes: string;
+  duration: string;
   justification: string;
   startTime: string;
 };
 
-const EMPTY_FORM: FormValues = { account: null, permissionSet: null, durationMinutes: "", justification: "", startTimeDate: "", startTimeTime: "" };
-const EMPTY_ERRORS: FormErrors = { account: "", permissionSet: "", durationMinutes: "", justification: "", startTime: "" };
+const EMPTY_FORM: FormValues = { account: null, permissionSet: null, durationDate: todayDateStr(), durationTime: "", justification: "", startTimeDate: "", startTimeTime: "" };
+const EMPTY_ERRORS: FormErrors = { account: "", permissionSet: "", duration: "", justification: "", startTime: "" };
 
 
 export function RequestAccessPage() {
@@ -128,9 +129,10 @@ export function RequestAccessPage() {
       const idcUserEmail = idcRes.data.email ?? "";
       const idcUserDisplayName = idcRes.data.displayName ?? idcRes.data.userName ?? "";
 
-      const [evalRes, requestsRes] = await Promise.all([
+      const [evalRes, requestsRes, accountsRes] = await Promise.all([
         client.queries.evaluateMyAccess({ idcUserId }),
         client.queries.listMyAccessRequests({ idcUserId }),
+        client.queries.listAWSAccounts(),
       ]);
 
       if (evalRes.errors?.length) {
@@ -141,7 +143,13 @@ export function RequestAccessPage() {
         (p): p is NonNullable<PermittedAccess> => p !== null
       );
 
-      setLoadState({ status: "ready", idcUserId, idcUserEmail, idcUserDisplayName, permitted });
+      const accountNames = new Map(
+        (accountsRes.data ?? [])
+          .filter((a): a is NonNullable<typeof a> => a !== null && !!a.id)
+          .map((a) => [a.id as string, a.name ?? a.id as string])
+      );
+
+      setLoadState({ status: "ready", idcUserId, idcUserEmail, idcUserDisplayName, permitted, accountNames });
       setRequests(
         (requestsRes.data ?? [])
           .filter((r): r is NonNullable<typeof r> => r !== null)
@@ -198,7 +206,11 @@ export function RequestAccessPage() {
         seen.add(p.accountId ?? "");
         return true;
       })
-      .map((p) => ({ label: p.accountId ?? "", value: p.accountId ?? "" }));
+      .map((p) => {
+        const id = p.accountId ?? "";
+        const name = loadState.accountNames.get(id);
+        return { label: name ? `${name} (${id})` : id, value: id };
+      });
   }
 
   function permissionSetOptions(): SelectProps.Option[] {
@@ -224,28 +236,28 @@ export function RequestAccessPage() {
       valid = false;
     }
 
-    const [hStr, mStr] = formValues.durationMinutes.split(":");
-    const hours = Number(hStr);
-    const mins = Number(mStr);
-    if (
-      !/^\d{2}:\d{2}$/.test(formValues.durationMinutes) ||
-      (hours === 0 && mins === 0)
-    ) {
-      errors.durationMinutes = "Enter a duration greater than 0 (hh:mm).";
+    if (!formValues.durationDate || !/^\d{2}:\d{2}$/.test(formValues.durationTime)) {
+      errors.duration = "Select a date and enter a time (hh:mm).";
       valid = false;
-    } else if (loadState.status === "ready" && formValues.account && formValues.permissionSet) {
-      const permittedEntry = loadState.permitted.find(
-        (p) =>
-          p.accountId === formValues.account!.value &&
-          p.permissionSetArn === formValues.permissionSet!.value
-      );
-      const requestedMinutes = hours * 60 + mins;
-      if (
-        permittedEntry?.maxDurationMinutes != null &&
-        requestedMinutes > permittedEntry.maxDurationMinutes
-      ) {
-        errors.durationMinutes = `Duration exceeds the policy limit of ${formatDuration(permittedEntry.maxDurationMinutes)}.`;
+    } else {
+      const end = new Date(`${formValues.durationDate}T${formValues.durationTime}`);
+      const requestedMinutes = Math.round((end.getTime() - Date.now()) / 60000);
+      if (requestedMinutes <= 0) {
+        errors.duration = "Duration must end in the future.";
         valid = false;
+      } else if (loadState.status === "ready" && formValues.account && formValues.permissionSet) {
+        const permittedEntry = loadState.permitted.find(
+          (p) =>
+            p.accountId === formValues.account!.value &&
+            p.permissionSetArn === formValues.permissionSet!.value
+        );
+        if (
+          permittedEntry?.maxDurationMinutes != null &&
+          requestedMinutes > permittedEntry.maxDurationMinutes
+        ) {
+          errors.duration = `Duration exceeds the policy limit of ${formatDuration(permittedEntry.maxDurationMinutes)}.`;
+          valid = false;
+        }
       }
     }
 
@@ -292,10 +304,9 @@ export function RequestAccessPage() {
         permissionSetArn: formValues.permissionSet!.value ?? "",
         permissionSetName:
           permittedEntry?.permissionSetName ?? formValues.permissionSet!.label ?? "",
-        durationMinutes: (() => {
-          const [h, m] = formValues.durationMinutes.split(":").map(Number);
-          return h * 60 + m;
-        })(),
+        durationMinutes: Math.round(
+          (new Date(`${formValues.durationDate}T${formValues.durationTime}`).getTime() - Date.now()) / 60000
+        ),
         requiresApproval: permittedEntry?.requiresApproval ?? false,
         justification: formValues.justification.trim(),
         startTime: formValues.startTimeDate
@@ -524,18 +535,34 @@ export function RequestAccessPage() {
 
               <FormField
                 label="Duration"
-                description="How long you need access, in hours and minutes."
-                errorText={formErrors.durationMinutes}
+                description="Select the date and time when your access should end. Duration is calculated from now to that point."
+                errorText={formErrors.duration}
               >
-                <TimeInput
-                  format="hh:mm"
-                  placeholder="hh:mm"
-                  use24Hour={true}
-                  value={formValues.durationMinutes}
-                  onChange={({ detail }) =>
-                    setFormValues((prev) => ({ ...prev, durationMinutes: detail.value }))
-                  }
-                />
+                <SpaceBetween direction="horizontal" size="xs">
+                  <DatePicker
+                    value={formValues.durationDate}
+                    onChange={({ detail }) =>
+                      setFormValues((prev) => ({ ...prev, durationDate: detail.value }))
+                    }
+                    placeholder="YYYY/MM/DD"
+                    isDateEnabled={(date) => {
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const maxDate = new Date(today.getTime() + 365 * 86400000);
+                      return date >= today && date <= maxDate;
+                    }}
+                  />
+                  <TimeInput
+                    format="hh:mm"
+                    placeholder="hh:mm"
+                    use24Hour={true}
+                    value={formValues.durationTime}
+                    onChange={({ detail }) =>
+                      setFormValues((prev) => ({ ...prev, durationTime: detail.value }))
+                    }
+                    disabled={!formValues.durationDate}
+                  />
+                </SpaceBetween>
               </FormField>
 
               <FormField

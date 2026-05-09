@@ -64,7 +64,8 @@ snitch/
 │   ├── components/             # Reusable UI components
 │   ├── hooks/                  # Custom React hooks
 │   ├── utils/
-│   │   └── duration.ts         # Shared: todayDateStr, minutesToMaxDuration, maxDurationToMinutes, formatDuration
+│   │   ├── duration.ts              # Shared: todayDateStr, minutesToMaxDuration, maxDurationToMinutes, formatDuration
+│   │   └── accessRequestStatus.ts   # Shared: accessRequestStatusType — maps request status string → Cloudscape StatusIndicator type
 │   ├── types/                  # Shared TypeScript types
 │   ├── pages/
 │   │   ├── PrivilegedPoliciesPage.tsx  # Admin CRUD for privileged policies (requiresApproval toggle only)
@@ -163,8 +164,8 @@ AssignPermissionSet → WaitForEarlyRevocation → RemovePermissionSet
 |---|---|---|
 | `storeApprovalTokenHandler.ts` | AccessRequestWorkflow | Called by `WaitForApproval`; stores task token, sets `PENDING_APPROVAL` |
 | `storeActiveTokenHandler.ts` | AccessRequestWorkflow | Called by `WaitForEarlyRevocation`; stores task token while request is `ACTIVE` |
-| `assignPermissionSetHandler.ts` | AccessRequestWorkflow | Creates SSO account assignment, sets `ACTIVE` |
-| `removePermissionSetHandler.ts` | AccessRequestWorkflow | Deletes SSO account assignment; sets `REVOKED` if `revokedByAdmin: true`, otherwise `EXPIRED` |
+| `assignPermissionSetHandler.ts` | AccessRequestWorkflow | Creates SSO account assignment, sets `ACTIVE`, writes `activatedAt` timestamp |
+| `removePermissionSetHandler.ts` | AccessRequestWorkflow | Deletes SSO account assignment; sets `REVOKED` if `revokedByAdmin: true`, otherwise `EXPIRED`; writes `deactivatedAt` timestamp |
 | `setStatusFailedHandler.ts` | AccessRequestWorkflow | Sets `FAILED` on unrecoverable workflow errors |
 | `requestAccessHandler.ts` | AccessRequestWorkflow | Persists the request (including `requesterCognitoSub`) and starts the state machine |
 | `listAccessRequestsHandler.ts` | AccessRequestWorkflow | Returns all requests for a given IDC user (newest first, via GSI) |
@@ -342,6 +343,7 @@ import { useAuthenticator } from "@aws-amplify/ui-react";
 // Src imports use the @/* alias
 import App from "@/App";
 import { formatDuration, todayDateStr, minutesToMaxDuration, maxDurationToMinutes } from "@/utils/duration";
+import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 ```
 
 ## UI Conventions
@@ -589,7 +591,7 @@ Application-level configuration (e.g. the CloudTrail log group) is stored in `Ap
 
 1. Reads `cloudTrailLogGroupName` from `AppSettingsTable`. Returns `[]` if not configured.
 2. Calls CloudWatch Logs `FilterLogEvents` with:
-   - `startTime` / `endTime` derived from the request's start timestamp + `durationMinutes`
+   - `startTime` / `endTime` sourced from `activatedAt` / `deactivatedAt` on the `AccessRequestItem` — the actual timestamps written by `assignPermissionSetHandler` and `removePermissionSetHandler`. Falls back to `startTime → createdAt` for start and `durationMinutes`-computed end for older records that pre-date these fields.
    - `filterPattern: ?"<idcUserEmail>"` — text search that matches any CloudTrail event whose JSON message contains the requester's email. This catches `AssumedRole` sessions from SSO where `userIdentity.arn` takes the form `arn:aws:sts::ACCOUNT:assumed-role/AWSReservedSSO_PermissionSet_HASH/<email>` — equivalent to CloudTrail Insights `WHERE userIdentity.arn LIKE '%<email>%'`.
 3. Parses each `event.message` as a CloudTrail event (bare JSON or `{Records:[...]}` wrapper), extracts standard fields, and returns up to 1000 events.
 
@@ -608,3 +610,28 @@ When an admin revokes an ACTIVE request via the Elevated Access page, an optiona
 - `todayDateStr()` — returns today as `YYYY-MM-DD` (the format Cloudscape `DatePicker` uses internally; displayed as `YYYY/MM/DD` in the UI)
 
 `formatDuration(minutes)` in the same file renders stored minutes as a human-readable label (`45min`, `8h 30min`, `2d 8h`) and is used in every table that shows a duration column.
+
+### Request Duration — date + time picker, computed from now
+
+`RequestAccessPage` uses the same `DatePicker` + `TimeInput` pattern for the **Duration** field. The date defaults to today; the user selects a date and time that represents **when their access should end**. `durationMinutes` is computed as `Math.round((selectedDateTime - Date.now()) / 60000)` — minutes from now to that point — before being submitted to `requestAccess`. This allows durations beyond 24 hours without a separate day input.
+
+The computed minutes are validated against `permittedEntry.maxDurationMinutes` from `evaluateMyAccess` before submission.
+
+### `activatedAt` / `deactivatedAt` — actual assignment timestamps on `AccessRequestItem`
+
+Two audit fields track the real wall-clock times of permission set assignment and removal:
+
+| Field | Written by | Value |
+|---|---|---|
+| `activatedAt` | `assignPermissionSetHandler` | ISO timestamp when `CreateAccountAssignment` succeeds |
+| `deactivatedAt` | `removePermissionSetHandler` | ISO timestamp when `DeleteAccountAssignment` succeeds |
+
+These are distinct from `startTime` (the user-requested scheduled start) and `durationMinutes` (the originally requested duration). The `ElevatedAccessPage → RequestDetailsModal` uses them as the authoritative CloudTrail query window. Older records without these fields fall back to the `startTime → createdAt` + `durationMinutes` computation.
+
+### `listAWSAccounts` — open to all authenticated users
+
+`listAWSAccounts` is authorized with `allow.authenticated()` so non-admin users can resolve account names in the `RequestAccessPage` account dropdown. The query returns all accounts in the AWS Organization, but account names only appear in the dropdown for accounts that `evaluateMyAccess` already permitted — so there is no functional access expansion. The trade-off is that any authenticated user can enumerate all org account names by calling the query directly.
+
+### `accessRequestStatusType` — shared status → indicator type mapping
+
+`src/utils/accessRequestStatus.ts` exports `accessRequestStatusType(status)` which maps an `AccessRequestItem` status string to a Cloudscape `StatusIndicatorProps.Type`. Both `RequestAccessPage` and `ElevatedAccessPage` import this instead of defining their own switch.
