@@ -30,7 +30,7 @@ footer_content: "Snitch — Privileged Access Management"
 # Auxiliary links in the top-right
 aux_links:
   "GitHub":
-    - "https://github.com/your-org/snitch"
+    - "https://github.com/camarim-cloud/snitch"
 
 aux_links_new_tab: true
 

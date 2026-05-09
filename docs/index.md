@@ -11,7 +11,7 @@ Just-in-Time (JIT) privileged access management for AWS accounts, built on AWS A
 {: .fs-6 .fw-300 }
 
 [Get Started]({% link _docs/getting-started.md %}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
-[View on GitHub](https://github.com/your-org/snitch){: .btn .fs-5 .mb-4 .mb-md-0 }
+[View on GitHub](https://github.com/camarim-cloud/snitch){: .btn .fs-5 .mb-4 .mb-md-0 }
 
 ---
 
