@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from "react";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
-import type { StatusIndicatorProps } from "@cloudscape-design/components/status-indicator";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { formatDuration } from "@/utils/duration";
+import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
@@ -45,24 +45,6 @@ const STATUS_FILTER_OPTIONS: SelectProps.Option[] = [
   ...ALL_STATUSES.map((s) => ({ label: s, value: s })),
 ];
 
-function statusIndicatorType(status: string): StatusIndicatorProps.Type {
-  switch (status) {
-    case "ACTIVE":
-      return "success";
-    case "REVOKED":
-    case "EXPIRED":
-      return "stopped";
-    case "FAILED":
-    case "REJECTED":
-      return "error";
-    case "PENDING_APPROVAL":
-      return "warning";
-    case "SCHEDULED":
-      return "info";
-    default:
-      return "pending";
-  }
-}
 
 type AccessRequestRow = {
   id: string;
@@ -226,7 +208,7 @@ function RequestDetailsModal({ request, visible, onDismiss }: RequestDetailsModa
           </SpaceBetween>
           <SpaceBetween size="xs">
             <Box fontWeight="bold" variant="awsui-key-label">Status</Box>
-            <StatusIndicator type={statusIndicatorType(request.status)}>
+            <StatusIndicator type={accessRequestStatusType(request.status)}>
               {request.status}
             </StatusIndicator>
           </SpaceBetween>
@@ -497,7 +479,7 @@ export function ElevatedAccessPage() {
               id: "status",
               header: "Status",
               cell: (r) => (
-                <StatusIndicator type={statusIndicatorType(r.status)}>
+                <StatusIndicator type={accessRequestStatusType(r.status)}>
                   {r.status}
                 </StatusIndicator>
               ),

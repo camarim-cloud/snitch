@@ -3,6 +3,7 @@ import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
 import { formatDuration } from "@/utils/duration";
+import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
@@ -89,26 +90,6 @@ type FormErrors = {
 const EMPTY_FORM: FormValues = { account: null, permissionSet: null, durationMinutes: "", justification: "", startTimeDate: "", startTimeTime: "" };
 const EMPTY_ERRORS: FormErrors = { account: "", permissionSet: "", durationMinutes: "", justification: "", startTime: "" };
 
-function requestStatusType(
-  status: string | null | undefined
-): "success" | "pending" | "stopped" | "error" | "info" | "warning" {
-  switch (status) {
-    case "ACTIVE":
-      return "success";
-    case "EXPIRED":
-      return "stopped";
-    case "FAILED":
-      return "error";
-    case "REJECTED":
-      return "error";
-    case "PENDING_APPROVAL":
-      return "warning";
-    case "SCHEDULED":
-      return "info";
-    default:
-      return "pending";
-  }
-}
 
 export function RequestAccessPage() {
   const [requests, setRequests] = useState<AccessRequestRow[]>([]);
@@ -389,7 +370,7 @@ export function RequestAccessPage() {
               id: "status",
               header: "Status",
               cell: (item) => (
-                <StatusIndicator type={requestStatusType(item.status)}>
+                <StatusIndicator type={accessRequestStatusType(item.status)}>
                   {item.status ?? "PENDING"}
                 </StatusIndicator>
               ),
