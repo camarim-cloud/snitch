@@ -4,12 +4,13 @@ import userEvent from "@testing-library/user-event";
 import createWrapper from "@cloudscape-design/components/test-utils/dom";
 
 // vi.hoisted ensures mock functions exist before vi.mock factories execute
-const { mockGetMyIDCUser, mockEvaluateMyAccess, mockListMyAccessRequests, mockRequestAccess } =
+const { mockGetMyIDCUser, mockEvaluateMyAccess, mockListMyAccessRequests, mockListAWSAccounts, mockRequestAccess } =
   vi.hoisted(() => ({
     mockGetMyIDCUser: vi.fn(),
     mockEvaluateMyAccess: vi.fn(),
     // Default: returns an empty list so the requests table renders without errors
     mockListMyAccessRequests: vi.fn().mockResolvedValue({ data: [], errors: undefined }),
+    mockListAWSAccounts: vi.fn().mockResolvedValue({ data: [], errors: undefined }),
     mockRequestAccess: vi.fn().mockResolvedValue({ data: { id: "req-1" }, errors: undefined }),
   }));
 
@@ -19,9 +20,15 @@ vi.mock("aws-amplify/data", () => ({
       getMyIDCUser: mockGetMyIDCUser,
       evaluateMyAccess: mockEvaluateMyAccess,
       listMyAccessRequests: mockListMyAccessRequests,
+      listAWSAccounts: mockListAWSAccounts,
     },
     mutations: {
       requestAccess: mockRequestAccess,
+    },
+    subscriptions: {
+      onAccessRequestCreated: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onAccessRequestApproved: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onAccessRequestRejected: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
     },
   }),
 }));
@@ -60,6 +67,7 @@ describe("RequestAccessPage", () => {
     vi.clearAllMocks();
     // Restore the default resolved values after clearAllMocks resets them
     mockListMyAccessRequests.mockResolvedValue({ data: [], errors: undefined });
+    mockListAWSAccounts.mockResolvedValue({ data: [], errors: undefined });
     mockRequestAccess.mockResolvedValue({ data: { id: "req-1" }, errors: undefined });
   });
 
@@ -190,7 +198,7 @@ describe("RequestAccessPage", () => {
       expect(screen.getByText("Select an account.")).toBeInTheDocument();
       expect(screen.getByText("Select a permission set.")).toBeInTheDocument();
       expect(
-        screen.getByText(/enter a duration greater than 0/i)
+        screen.getByText(/select a date and enter a time/i)
       ).toBeInTheDocument();
       expect(
         screen.getByText(/explain why you need this access/i)
@@ -309,8 +317,8 @@ describe("RequestAccessPage", () => {
 
     it("a time entered alongside a past date triggers the start time error", async () => {
       await openModal();
-      createWrapper().findDatePicker()!.setInputValue("2020/01/01");
-      createWrapper().findTimeInput()!.setInputValue("10:00");
+      createWrapper().findAllDatePickers()[1].setInputValue("2020/01/01");
+      createWrapper().findAllTimeInputs()[1].setInputValue("10:00");
       await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
       expect(
         screen.getByText("Start time must be in the future.")
@@ -319,7 +327,7 @@ describe("RequestAccessPage", () => {
 
     it("shows 'Start time must be in the future.' when the date is in the past", async () => {
       await openModal();
-      createWrapper().findDatePicker()!.setInputValue("2020/01/01");
+      createWrapper().findAllDatePickers()[1].setInputValue("2020/01/01");
       await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
       expect(
         screen.getByText("Start time must be in the future.")
@@ -356,7 +364,7 @@ describe("RequestAccessPage", () => {
 
       // Open → set a past date → submit → error appears
       await userEvent.click(screen.getByRole("button", { name: /new request/i }));
-      createWrapper().findDatePicker()!.setInputValue("2020/01/01");
+      createWrapper().findAllDatePickers()[1].setInputValue("2020/01/01");
       await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
       expect(
         screen.getByText("Start time must be in the future.")
@@ -377,14 +385,14 @@ describe("RequestAccessPage", () => {
       await waitFor(() => screen.getByRole("button", { name: /new request/i }));
 
       await userEvent.click(screen.getByRole("button", { name: /new request/i }));
-      createWrapper().findDatePicker()!.setInputValue("2027/01/01");
-      expect(createWrapper().findDatePicker()!.getInputValue()).toBe("2027/01/01");
+      createWrapper().findAllDatePickers()[1].setInputValue("2027/01/01");
+      expect(createWrapper().findAllDatePickers()[1].getInputValue()).toBe("2027/01/01");
 
       const dialog = screen.getByRole("dialog", { name: /new access request/i });
       await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
       await userEvent.click(screen.getByRole("button", { name: /new request/i }));
 
-      expect(createWrapper().findDatePicker()!.getInputValue()).toBe("");
+      expect(createWrapper().findAllDatePickers()[1].getInputValue()).toBe("");
     });
   });
 });

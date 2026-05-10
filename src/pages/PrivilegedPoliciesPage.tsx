@@ -142,6 +142,15 @@ export function PrivilegedPoliciesPage() {
     fetchPolicies();
   }, [fetchPolicies]);
 
+  useEffect(() => {
+    const subs = [
+      client.subscriptions.onPrivilegedPolicyCreated().subscribe({ next: () => void fetchPolicies() }),
+      client.subscriptions.onPrivilegedPolicyUpdated().subscribe({ next: () => void fetchPolicies() }),
+      client.subscriptions.onPrivilegedPolicyDeleted().subscribe({ next: () => void fetchPolicies() }),
+    ];
+    return () => subs.forEach((s) => s.unsubscribe());
+  }, [fetchPolicies]);
+
   const loadAWSResources = useCallback(async () => {
     setLoadingResources(true);
     setResourcesError(null);

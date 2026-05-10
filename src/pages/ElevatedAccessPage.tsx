@@ -375,6 +375,16 @@ export function ElevatedAccessPage() {
     loadRequests();
   }, [loadRequests]);
 
+  useEffect(() => {
+    const subs = [
+      client.subscriptions.onAccessRequestCreated().subscribe({ next: () => void loadRequests() }),
+      client.subscriptions.onAccessRequestApproved().subscribe({ next: () => void loadRequests() }),
+      client.subscriptions.onAccessRequestRejected().subscribe({ next: () => void loadRequests() }),
+      client.subscriptions.onAccessRequestRevoked().subscribe({ next: () => void loadRequests() }),
+    ];
+    return () => subs.forEach((s) => s.unsubscribe());
+  }, [loadRequests]);
+
   // Status dropdown is applied before the collection hook so text filter
   // and pagination always operate on the already-status-filtered set.
   const filteredByStatus = statusFilter.value

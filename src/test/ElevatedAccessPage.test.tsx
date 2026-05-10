@@ -17,6 +17,12 @@ vi.mock("aws-amplify/data", () => ({
       getCloudTrailLogs: mockGetCloudTrailLogs,
     },
     mutations: { revokeAccess: mockRevokeAccess },
+    subscriptions: {
+      onAccessRequestCreated: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onAccessRequestApproved: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onAccessRequestRejected: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onAccessRequestRevoked: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+    },
   }),
 }));
 

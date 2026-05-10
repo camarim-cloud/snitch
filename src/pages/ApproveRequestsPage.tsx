@@ -92,6 +92,15 @@ export function ApproveRequestsPage() {
     loadRequests();
   }, [loadRequests]);
 
+  useEffect(() => {
+    const subs = [
+      client.subscriptions.onAccessRequestCreated().subscribe({ next: () => void loadRequests() }),
+      client.subscriptions.onAccessRequestApproved().subscribe({ next: () => void loadRequests() }),
+      client.subscriptions.onAccessRequestRejected().subscribe({ next: () => void loadRequests() }),
+    ];
+    return () => subs.forEach((s) => s.unsubscribe());
+  }, [loadRequests]);
+
   function openModal(mode: "approve" | "reject") {
     setComment("");
     setActionError("");

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
@@ -145,8 +145,8 @@ export function RequestAccessPage() {
 
       const accountNames = new Map(
         (accountsRes.data ?? [])
-          .filter((a): a is NonNullable<typeof a> => a !== null && !!a.id)
-          .map((a) => [a.id as string, a.name ?? a.id as string])
+          .filter((acc): acc is NonNullable<typeof acc> & { id: string } => acc != null && typeof acc.id === 'string' && acc.id.length > 0)
+          .map((acc) => [acc.id, acc.name ?? acc.id])
       );
 
       setLoadState({ status: "ready", idcUserId, idcUserEmail, idcUserDisplayName, permitted, accountNames });
@@ -190,6 +190,23 @@ export function RequestAccessPage() {
     loadAll();
   }, [loadAll]);
 
+  // Keep the ref pointing to the latest loadRequests so the subscription
+  // effect (which runs once) always calls the current version.
+  const loadRequestsRef = useRef(loadRequests);
+  useEffect(() => {
+    loadRequestsRef.current = loadRequests;
+  }, [loadRequests]);
+
+  useEffect(() => {
+    const subs = [
+      client.subscriptions.onAccessRequestCreated().subscribe({ next: () => void loadRequestsRef.current() }),
+      client.subscriptions.onAccessRequestApproved().subscribe({ next: () => void loadRequestsRef.current() }),
+      client.subscriptions.onAccessRequestRejected().subscribe({ next: () => void loadRequestsRef.current() }),
+    ];
+    return () => subs.forEach((s) => s.unsubscribe());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function openModal() {
     setFormValues(EMPTY_FORM);
     setFormErrors(EMPTY_ERRORS);
@@ -224,7 +241,7 @@ export function RequestAccessPage() {
   }
 
   function validate(): boolean {
-    const errors: FormErrors = { account: "", permissionSet: "", durationMinutes: "", justification: "", startTime: "" };
+    const errors: FormErrors = { account: "", permissionSet: "", duration: "", justification: "", startTime: "" };
     let valid = true;
 
     if (!formValues.account) {
@@ -479,7 +496,8 @@ export function RequestAccessPage() {
                       account: detail.selectedOption,
                       // Reset permission set when account changes
                       permissionSet: null,
-                      durationMinutes: formValues.durationMinutes,
+                      durationDate: formValues.durationDate,
+                      durationTime: formValues.durationTime,
                       justification: formValues.justification,
                       startTimeDate: formValues.startTimeDate,
                       startTimeTime: formValues.startTimeTime,

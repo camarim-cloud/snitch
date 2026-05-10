@@ -372,6 +372,64 @@ const schema = a.schema({
     .handler(a.handler.function(updateSettingsFunction))
     .authorization((allow) => [allow.group("Admins")]),
 
+  // ─── Real-time subscriptions ─────────────────────────────────────────────────
+  // Each subscription is linked to a mutation via .for() so AppSync broadcasts
+  // the mutation result to all subscribers whenever the mutation executes.
+
+  onPrivilegedPolicyCreated: a
+    .subscription()
+    .for(a.ref("createPrivilegedPolicyWithAVP"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  onPrivilegedPolicyUpdated: a
+    .subscription()
+    .for(a.ref("updatePrivilegedPolicyWithAVP"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  onPrivilegedPolicyDeleted: a
+    .subscription()
+    .for(a.ref("deletePrivilegedPolicyWithAVP"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  onApprovalPolicyCreated: a
+    .subscription()
+    .for(a.ref("createApprovalPolicyWithAVP"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  onApprovalPolicyDeleted: a
+    .subscription()
+    .for(a.ref("deleteApprovalPolicyWithAVP"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.group("Admins")]),
+
+  onAccessRequestCreated: a
+    .subscription()
+    .for(a.ref("requestAccess"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.authenticated()]),
+
+  onAccessRequestApproved: a
+    .subscription()
+    .for(a.ref("approveRequest"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.authenticated()]),
+
+  onAccessRequestRejected: a
+    .subscription()
+    .for(a.ref("rejectRequest"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.authenticated()]),
+
+  onAccessRequestRevoked: a
+    .subscription()
+    .for(a.ref("revokeAccess"))
+    .handler(a.handler.custom({ entry: "./subscriptionHandler.js" }))
+    .authorization((allow) => [allow.group("Admins")]),
+
   // ─── CloudTrail audit logs ─────────────────────────────────────────────────
 
   CloudTrailLogEvent: a.customType({

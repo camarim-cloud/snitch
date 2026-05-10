@@ -126,6 +126,14 @@ export function ApprovalPolicyPage() {
     fetchApprovalPolicies();
   }, [fetchApprovalPolicies]);
 
+  useEffect(() => {
+    const subs = [
+      client.subscriptions.onApprovalPolicyCreated().subscribe({ next: () => void fetchApprovalPolicies() }),
+      client.subscriptions.onApprovalPolicyDeleted().subscribe({ next: () => void fetchApprovalPolicies() }),
+    ];
+    return () => subs.forEach((s) => s.unsubscribe());
+  }, [fetchApprovalPolicies]);
+
   const loadModalResources = useCallback(async () => {
     const [accountsRes, permSetsRes] = await Promise.all([
       client.queries.listAWSAccounts(),

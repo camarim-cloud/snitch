@@ -43,6 +43,11 @@ vi.mock("aws-amplify/data", () => ({
       updatePrivilegedPolicyWithAVP: vi.fn(),
       deletePrivilegedPolicyWithAVP: vi.fn(),
     },
+    subscriptions: {
+      onPrivilegedPolicyCreated: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onPrivilegedPolicyUpdated: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+      onPrivilegedPolicyDeleted: () => ({ subscribe: () => ({ unsubscribe: vi.fn() }) }),
+    },
   }),
 }));
 
