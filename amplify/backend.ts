@@ -2,7 +2,7 @@ import { defineBackend } from "@aws-amplify/backend";
 import { CfnUserPoolGroup } from "aws-cdk-lib/aws-cognito";
 import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
-import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
+import { Function as LambdaFunction, FunctionUrlAuthType } from "aws-cdk-lib/aws-lambda";
 import { CfnPolicyStore } from "aws-cdk-lib/aws-verifiedpermissions";
 import { RemovalPolicy } from "aws-cdk-lib";
 import { setupAccessRequestWorkflow } from "./accessRequestWorkflow";
@@ -45,6 +45,7 @@ import {
   getSettingsFunction,
   updateSettingsFunction,
 } from "./functions/settings/resource";
+import { slackInteractiveFunction } from "./functions/slackInteractions/resource";
 
 const backend = defineBackend({
   auth,
@@ -78,6 +79,7 @@ const backend = defineBackend({
   getCloudTrailLogsFunction,
   getSettingsFunction,
   updateSettingsFunction,
+  slackInteractiveFunction,
 });
 
 // ─── Cognito Admins group ─────────────────────────────────────────────────────
@@ -413,7 +415,7 @@ const appSettingsTable = new Table(settingsStack, "AppSettingsTable", {
 
 const settingsDdbPolicy = new PolicyStatement({
   effect: Effect.ALLOW,
-  actions: ["dynamodb:GetItem", "dynamodb:PutItem"],
+  actions: ["dynamodb:GetItem", "dynamodb:UpdateItem"],
   resources: [appSettingsTable.tableArn],
 });
 
@@ -446,3 +448,71 @@ backend.getCloudTrailLogsFunction.resources.lambda.addToRolePolicy(
   "APP_SETTINGS_TABLE_NAME",
   appSettingsTable.tableName
 );
+
+// storeApprovalToken: reads the request + settings to send Slack notification.
+backend.storeApprovalTokenFunction.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["dynamodb:GetItem"],
+    resources: [accessRequestTableArn, appSettingsTable.tableArn],
+  })
+);
+(backend.storeApprovalTokenFunction.resources.lambda as LambdaFunction).addEnvironment(
+  "APP_SETTINGS_TABLE_NAME",
+  appSettingsTable.tableName
+);
+
+// ─── Slack interactive handler ────────────────────────────────────────────────
+
+const slackLambda = backend.slackInteractiveFunction.resources.lambda as LambdaFunction;
+
+slackLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["dynamodb:GetItem"],
+    resources: [appSettingsTable.tableArn, accessRequestTableArn],
+  })
+);
+
+slackLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: [
+      "cognito-idp:ListUsers",
+      "cognito-idp:AdminListGroupsForUser",
+    ],
+    resources: [userPool.userPoolArn],
+  })
+);
+
+slackLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["verifiedpermissions:IsAuthorized"],
+    resources: [policyStoreArn],
+  })
+);
+
+const approveRequestLambda = backend.approveRequestFunction.resources.lambda as LambdaFunction;
+const rejectRequestLambda = backend.rejectRequestFunction.resources.lambda as LambdaFunction;
+
+slackLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["lambda:InvokeFunction"],
+    resources: [approveRequestLambda.functionArn, rejectRequestLambda.functionArn],
+  })
+);
+
+slackLambda.addEnvironment("APP_SETTINGS_TABLE_NAME", appSettingsTable.tableName);
+slackLambda.addEnvironment("ACCESS_REQUEST_TABLE_NAME", accessRequestTableName);
+slackLambda.addEnvironment("AUTH_USER_POOL_ID", userPool.userPoolId);
+slackLambda.addEnvironment("AVP_POLICY_STORE_ID", policyStoreId);
+slackLambda.addEnvironment("APPROVE_REQUEST_FUNCTION_ARN", approveRequestLambda.functionArn);
+slackLambda.addEnvironment("REJECT_REQUEST_FUNCTION_ARN", rejectRequestLambda.functionArn);
+
+// Public HTTP endpoint for Slack to call back — auth is handled via HMAC signature verification.
+slackLambda.addFunctionUrl({
+  authType: FunctionUrlAuthType.NONE,
+  cors: { allowedOrigins: ["https://slack.com"] },
+});

@@ -1,3 +1,4 @@
+import { useState, useCallback, useEffect } from "react";
 import { useAuthenticator } from "@aws-amplify/ui-react";
 import { Route, Routes, useNavigate, useLocation } from "react-router";
 
@@ -6,6 +7,7 @@ import SideNavigation, { SideNavigationProps } from "@cloudscape-design/componen
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 
 import { AdminGuard } from "./components/AdminGuard";
+import { HelpPanelContext } from "./components/HelpPanelContext";
 import { ApprovalPolicyPage } from "./pages/ApprovalPolicyPage";
 import { ApproveRequestsPage } from "./pages/ApproveRequestsPage";
 import { ElevatedAccessPage } from "./pages/ElevatedAccessPage";
@@ -31,7 +33,6 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
 
 function AppNav() {
   const navigate = useNavigate();
-  // With HashRouter, the routed path lives in `pathname`, not in `hash`
   const { pathname } = useLocation();
   const activeHref = `#${pathname}`;
 
@@ -50,9 +51,28 @@ function AppNav() {
 
 function App() {
   const { user, signOut } = useAuthenticator();
+  const { pathname } = useLocation();
+  const [toolsContent, setToolsContent] = useState<React.ReactNode>(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+
+  // Clear the help panel whenever the user navigates to a different page so the
+  // tools toggle icon doesn't persist across routes.
+  useEffect(() => {
+    setToolsContent(null);
+    setToolsOpen(false);
+  }, [pathname]);
+
+  const openHelpPanel = useCallback((content: React.ReactNode) => {
+    setToolsContent(content);
+    setToolsOpen(true);
+  }, []);
+
+  const closeHelpPanel = useCallback(() => {
+    setToolsOpen(false);
+  }, []);
 
   return (
-    <>
+    <HelpPanelContext.Provider value={{ openHelpPanel, closeHelpPanel }}>
       <TopNavigation
         identity={{ href: "#", title: "Snitch" }}
         utilities={[
@@ -70,7 +90,10 @@ function App() {
       />
       <AppLayout
         navigation={<AppNav />}
-        toolsHide
+        tools={toolsContent ?? <></>}
+        toolsOpen={toolsOpen}
+        toolsHide={toolsContent === null}
+        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
         content={
           <Routes>
             <Route path="/" element={<RequestAccessPage />} />
@@ -110,7 +133,7 @@ function App() {
           </Routes>
         }
       />
-    </>
+    </HelpPanelContext.Provider>
   );
 }
 

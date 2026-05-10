@@ -357,6 +357,9 @@ const schema = a.schema({
 
   AppSettings: a.customType({
     cloudTrailLogGroupName: a.string(),
+    slackBotToken: a.string(),
+    slackChannelId: a.string(),
+    slackSigningSecret: a.string(),
   }),
 
   getAppSettings: a
@@ -367,7 +370,12 @@ const schema = a.schema({
 
   updateAppSettings: a
     .mutation()
-    .arguments({ cloudTrailLogGroupName: a.string().required() })
+    .arguments({
+      cloudTrailLogGroupName: a.string(),
+      slackBotToken: a.string(),
+      slackChannelId: a.string(),
+      slackSigningSecret: a.string(),
+    })
     .returns(a.ref("AppSettings"))
     .handler(a.handler.function(updateSettingsFunction))
     .authorization((allow) => [allow.group("Admins")]),

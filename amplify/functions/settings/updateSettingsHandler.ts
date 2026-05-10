@@ -1,5 +1,5 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const TABLE_NAME = process.env.APP_SETTINGS_TABLE_NAME!;
@@ -8,18 +8,52 @@ const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }
 
 const SETTINGS_KEY = "global";
 
+type SettingsArgs = {
+  cloudTrailLogGroupName?: string | null;
+  slackBotToken?: string | null;
+  slackChannelId?: string | null;
+  slackSigningSecret?: string | null;
+};
+
 type AppSyncEvent = {
-  arguments: { cloudTrailLogGroupName: string };
+  arguments: SettingsArgs;
   identity: unknown;
 };
 
-export const handler = async (event: AppSyncEvent) => {
-  const { cloudTrailLogGroupName } = event.arguments;
+export const handler = async (event: AppSyncEvent): Promise<SettingsArgs> => {
+  const { cloudTrailLogGroupName, slackBotToken, slackChannelId, slackSigningSecret } =
+    event.arguments;
+
+  const fields: Array<[string, string | null | undefined]> = [
+    ["cloudTrailLogGroupName", cloudTrailLogGroupName],
+    ["slackBotToken", slackBotToken],
+    ["slackChannelId", slackChannelId],
+    ["slackSigningSecret", slackSigningSecret],
+  ];
+
+  // AppSync forwards null for optional arguments that were not provided by
+  // the caller, so exclude both undefined and null to avoid overwriting
+  // unrelated DynamoDB fields. An explicit empty string "" is still accepted
+  // (means the admin intentionally cleared the value).
+  const provided = fields.filter(([, v]) => v != null);
+
+  if (provided.length === 0) {
+    return {};
+  }
+
+  const setExprs = provided.map(([, ], i) => `#f${i} = :v${i}`);
+  const names = Object.fromEntries(provided.map(([k], i) => [`#f${i}`, k]));
+  const values = Object.fromEntries(provided.map(([, v], i) => [`:v${i}`, v ?? null]));
+
   await dynamo.send(
-    new PutCommand({
+    new UpdateCommand({
       TableName: TABLE_NAME,
-      Item: { settingKey: SETTINGS_KEY, cloudTrailLogGroupName },
+      Key: { settingKey: SETTINGS_KEY },
+      UpdateExpression: `SET ${setExprs.join(", ")}`,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
     })
   );
-  return { cloudTrailLogGroupName };
+
+  return Object.fromEntries(provided.map(([k, v]) => [k, v ?? null]));
 };

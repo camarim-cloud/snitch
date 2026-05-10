@@ -16,5 +16,8 @@ export const handler = async (_event: AppSyncEvent) => {
   );
   return {
     cloudTrailLogGroupName: result.Item?.cloudTrailLogGroupName ?? null,
+    slackBotToken: result.Item?.slackBotToken ?? null,
+    slackChannelId: result.Item?.slackChannelId ?? null,
+    slackSigningSecret: result.Item?.slackSigningSecret ?? null,
   };
 };
