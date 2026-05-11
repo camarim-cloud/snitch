@@ -109,13 +109,15 @@ describe("PrivilegedPoliciesPage", () => {
   });
 
   describe("max duration — default value", () => {
-    it("pre-fills 23:59 in the create form", async () => {
+    it("starts empty in the create form (no limit)", async () => {
       render(<PrivilegedPoliciesPage />);
       const dialog = await openCreateModal();
-      expect(within(dialog).getByDisplayValue("23:59")).toBeInTheDocument();
+      // The duration number input should be empty — blank means no limit
+      const durationInput = within(dialog).getByPlaceholderText(/leave blank for no limit/i) as HTMLInputElement;
+      expect(durationInput.value).toBe("");
     });
 
-    it("pre-fills 23:59 when editing a policy that has no max duration set", async () => {
+    it("starts empty when editing a policy that has no max duration set", async () => {
       mockListPolicies.mockResolvedValue({
         data: [{ ...EXISTING_POLICY, maxDurationMinutes: null }],
       });
@@ -130,34 +132,30 @@ describe("PrivilegedPoliciesPage", () => {
       const dialog = await screen.findByRole("dialog", { name: /edit policy/i });
       await waitFor(() => within(dialog).getByText("Max Duration"));
 
-      expect(within(dialog).getByDisplayValue("23:59")).toBeInTheDocument();
+      const durationInput = within(dialog).getByPlaceholderText(/leave blank for no limit/i) as HTMLInputElement;
+      expect(durationInput.value).toBe("");
     });
   });
 
   describe("max duration — validation", () => {
-    it("shows no duration error when the field is cleared (blank is treated as default)", async () => {
-      // Cloudscape TimeInput enforces hh:mm format so invalid text cannot be entered;
-      // clearing the field is the only reachable non-default state.
+    it("shows no duration error when the field is blank (blank = no limit)", async () => {
       render(<PrivilegedPoliciesPage />);
       const dialog = await openCreateModal();
 
-      const durationInput = within(dialog).getByDisplayValue("23:59");
-      await userEvent.clear(durationInput);
-
+      // Submit with the duration field empty — should not produce a duration error
       await userEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
       expect(within(dialog).queryByText(/maximum duration/i)).not.toBeInTheDocument();
       expect(within(dialog).queryByText(/enter a valid duration/i)).not.toBeInTheDocument();
     });
 
-    it("does not show a validation error for a duration of 23:59", async () => {
+    it("does not show a validation error for a valid duration value", async () => {
       render(<PrivilegedPoliciesPage />);
       const dialog = await openCreateModal();
 
-      // Fill required fields with minimal valid data to reach the duration check
-      expect(within(dialog).getByDisplayValue("23:59")).toBeInTheDocument();
+      const durationInput = within(dialog).getByPlaceholderText(/leave blank for no limit/i);
+      await userEvent.type(durationInput, "8");
 
-      // Duration field is already at 23:59 — no error should appear for it
       await userEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
       // Other required fields will fail, but not the duration

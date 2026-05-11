@@ -3,18 +3,12 @@ import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import {
-  todayDateStr,
-  minutesToMaxDuration,
-  maxDurationToMinutes,
-  formatDuration,
-} from "@/utils/duration";
+import { formatDuration } from "@/utils/duration";
 
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import ContentLayout from "@cloudscape-design/components/content-layout";
-import DatePicker from "@cloudscape-design/components/date-picker";
 import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
@@ -27,7 +21,6 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import Table from "@cloudscape-design/components/table";
 import TextFilter from "@cloudscape-design/components/text-filter";
-import TimeInput from "@cloudscape-design/components/time-input";
 import Toggle from "@cloudscape-design/components/toggle";
 
 const client = generateClient<Schema>();
@@ -40,6 +33,28 @@ const PRINCIPAL_TYPE_OPTIONS: Option[] = [
   { label: "Group", value: "GROUP" },
 ];
 
+type DurationUnit = "minutes" | "hours" | "days";
+
+const MAX_DURATION_UNIT_OPTIONS: Option[] = [
+  { value: "minutes", label: "Minutes" },
+  { value: "hours", label: "Hours" },
+  { value: "days", label: "Days" },
+];
+
+function durationToMinutes(value: string, unit: DurationUnit): number {
+  const n = parseInt(value, 10);
+  if (isNaN(n) || n <= 0) return 0;
+  if (unit === "hours") return n * 60;
+  if (unit === "days") return n * 1440;
+  return n;
+}
+
+function minutesToDuration(minutes: number): { value: string; unit: DurationUnit } {
+  if (minutes % 1440 === 0) return { value: String(minutes / 1440), unit: "days" };
+  if (minutes % 60 === 0) return { value: String(minutes / 60), unit: "hours" };
+  return { value: String(minutes), unit: "minutes" };
+}
+
 const PAGE_SIZE = 10;
 
 type FormValues = {
@@ -50,8 +65,8 @@ type FormValues = {
   accounts: readonly Option[];
   ous: readonly Option[];
   permissionSets: readonly Option[];
-  maxDurationDate: string;
-  maxDurationTime: string;
+  maxDurationValue: string;
+  maxDurationUnit: DurationUnit;
   requiresApproval: boolean;
 };
 
@@ -63,8 +78,8 @@ const EMPTY_FORM: FormValues = {
   accounts: [],
   ous: [],
   permissionSets: [],
-  maxDurationDate: "",
-  maxDurationTime: "23:59",
+  maxDurationValue: "",
+  maxDurationUnit: "hours",
   requiresApproval: false,
 };
 
@@ -231,7 +246,7 @@ export function PrivilegedPoliciesPage() {
   }
 
   function openCreateModal() {
-    setFormValues({ ...EMPTY_FORM, maxDurationDate: todayDateStr() });
+    setFormValues(EMPTY_FORM);
     clearFormErrors();
     setModalMode("create");
     loadAWSResources();
@@ -262,10 +277,9 @@ export function PrivilegedPoliciesPage() {
         value: arn ?? "",
       })),
       ...(() => {
-        const { date, time } = policy.maxDurationMinutes
-          ? minutesToMaxDuration(policy.maxDurationMinutes)
-          : { date: todayDateStr(), time: "23:59" };
-        return { maxDurationDate: date, maxDurationTime: time };
+        if (!policy.maxDurationMinutes) return { maxDurationValue: "", maxDurationUnit: "hours" as DurationUnit };
+        const { value, unit } = minutesToDuration(policy.maxDurationMinutes);
+        return { maxDurationValue: value, maxDurationUnit: unit };
       })(),
       requiresApproval: policy.requiresApproval ?? false,
     });
@@ -296,26 +310,11 @@ export function PrivilegedPoliciesPage() {
     } else {
       setPermissionSetError("");
     }
-    if (formValues.maxDurationTime && !/^\d{2}:\d{2}$/.test(formValues.maxDurationTime)) {
-      setMaxDurationError("Enter a valid time (hh:mm, 24-hour format).");
-      valid = false;
-    } else if (formValues.maxDurationTime) {
-      const [h, m] = formValues.maxDurationTime.split(":").map(Number);
-      if (h > 23 || m > 59) {
-        setMaxDurationError("Enter a valid time (hh:mm, 24-hour format).");
+    if (formValues.maxDurationValue) {
+      const n = parseInt(formValues.maxDurationValue, 10);
+      if (isNaN(n) || n <= 0) {
+        setMaxDurationError("Enter a valid duration greater than zero.");
         valid = false;
-      } else if (formValues.maxDurationDate) {
-        const [year, month, day] = formValues.maxDurationDate.split("-").map(Number);
-        const selected = new Date(year, month - 1, day);
-        const base = new Date();
-        base.setHours(0, 0, 0, 0);
-        const days = Math.round((selected.getTime() - base.getTime()) / 86400000);
-        if (days > 365) {
-          setMaxDurationError("Maximum duration is 1 year from today.");
-          valid = false;
-        } else {
-          setMaxDurationError("");
-        }
       } else {
         setMaxDurationError("");
       }
@@ -364,10 +363,9 @@ export function PrivilegedPoliciesPage() {
         ouIds: formValues.ous.map((o) => o.value ?? ""),
         permissionSetArns: formValues.permissionSets.map((o) => o.value ?? ""),
         permissionSetNames: formValues.permissionSets.map((o) => o.label ?? ""),
-        maxDurationMinutes: maxDurationToMinutes(
-          formValues.maxDurationDate,
-          formValues.maxDurationTime
-        ),
+        maxDurationMinutes: formValues.maxDurationValue
+          ? durationToMinutes(formValues.maxDurationValue, formValues.maxDurationUnit)
+          : undefined,
         requiresApproval: formValues.requiresApproval,
       };
 
@@ -670,32 +668,30 @@ export function PrivilegedPoliciesPage() {
 
                 <FormField
                   label="Max Duration"
-                  description="Date and time that defines the maximum access duration. The duration is calculated from today to the selected date and time (up to 1 year). Defaults to end of today if left blank."
+                  description="Maximum time a user can request access under this policy. Leave blank for no limit."
                   errorText={maxDurationError}
                 >
                   <SpaceBetween direction="horizontal" size="xs">
-                    <DatePicker
-                      value={formValues.maxDurationDate}
+                    <Input
+                      type="number"
+                      value={formValues.maxDurationValue}
                       onChange={({ detail }) =>
-                        setFormValues((prev) => ({ ...prev, maxDurationDate: detail.value }))
+                        setFormValues((prev) => ({ ...prev, maxDurationValue: detail.value }))
                       }
-                      placeholder="YYYY/MM/DD"
-                      isDateEnabled={(date) => {
-                        const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-                        const maxDate = new Date(today.getTime() + 365 * 86400000);
-                        return date >= today && date <= maxDate;
-                      }}
+                      placeholder="e.g. 8 (leave blank for no limit)"
                     />
-                    <TimeInput
-                      format="hh:mm"
-                      placeholder="hh:mm"
-                      use24Hour={true}
-                      value={formValues.maxDurationTime}
-                      onChange={({ detail }) =>
-                        setFormValues((prev) => ({ ...prev, maxDurationTime: detail.value }))
+                    <Select
+                      selectedOption={
+                        MAX_DURATION_UNIT_OPTIONS.find((o) => o.value === formValues.maxDurationUnit) ??
+                        MAX_DURATION_UNIT_OPTIONS[1]
                       }
-                      disabled={!formValues.maxDurationDate}
+                      onChange={({ detail }) =>
+                        setFormValues((prev) => ({
+                          ...prev,
+                          maxDurationUnit: detail.selectedOption.value as DurationUnit,
+                        }))
+                      }
+                      options={MAX_DURATION_UNIT_OPTIONS}
                     />
                   </SpaceBetween>
                 </FormField>

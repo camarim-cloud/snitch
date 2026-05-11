@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
-import { formatDuration, todayDateStr } from "@/utils/duration";
+import { formatDuration } from "@/utils/duration";
 import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 
 import Alert from "@cloudscape-design/components/alert";
@@ -13,6 +13,7 @@ import DatePicker from "@cloudscape-design/components/date-picker";
 import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
+import Input from "@cloudscape-design/components/input";
 import Textarea from "@cloudscape-design/components/textarea";
 import TimeInput from "@cloudscape-design/components/time-input";
 import Modal from "@cloudscape-design/components/modal";
@@ -70,11 +71,13 @@ type LoadState =
   | { status: "error"; message: string }
   | { status: "ready"; idcUserId: string; idcUserEmail: string; idcUserDisplayName: string; permitted: NonNullable<PermittedAccess>[]; accountNames: Map<string, string> };
 
+type DurationUnit = "minutes" | "hours" | "days";
+
 type FormValues = {
   account: SelectProps.Option | null;
   permissionSet: SelectProps.Option | null;
-  durationDate: string;
-  durationTime: string;
+  durationValue: string;
+  durationUnit: DurationUnit;
   justification: string;
   startTimeDate: string;
   startTimeTime: string;
@@ -88,7 +91,21 @@ type FormErrors = {
   startTime: string;
 };
 
-const EMPTY_FORM: FormValues = { account: null, permissionSet: null, durationDate: todayDateStr(), durationTime: "", justification: "", startTimeDate: "", startTimeTime: "" };
+const DURATION_UNIT_OPTIONS: SelectProps.Option[] = [
+  { value: "minutes", label: "Minutes" },
+  { value: "hours", label: "Hours" },
+  { value: "days", label: "Days" },
+];
+
+function durationToMinutes(value: string, unit: DurationUnit): number {
+  const n = parseInt(value, 10);
+  if (isNaN(n) || n <= 0) return 0;
+  if (unit === "hours") return n * 60;
+  if (unit === "days") return n * 1440;
+  return n;
+}
+
+const EMPTY_FORM: FormValues = { account: null, permissionSet: null, durationValue: "", durationUnit: "hours", justification: "", startTimeDate: "", startTimeTime: "" };
 const EMPTY_ERRORS: FormErrors = { account: "", permissionSet: "", duration: "", justification: "", startTime: "" };
 
 
@@ -253,28 +270,22 @@ export function RequestAccessPage() {
       valid = false;
     }
 
-    if (!formValues.durationDate || !/^\d{2}:\d{2}$/.test(formValues.durationTime)) {
-      errors.duration = "Select a date and enter a time (hh:mm).";
+    const requestedMinutes = durationToMinutes(formValues.durationValue, formValues.durationUnit);
+    if (!formValues.durationValue || requestedMinutes <= 0) {
+      errors.duration = "Enter a valid duration greater than zero.";
       valid = false;
-    } else {
-      const end = new Date(`${formValues.durationDate}T${formValues.durationTime}`);
-      const requestedMinutes = Math.round((end.getTime() - Date.now()) / 60000);
-      if (requestedMinutes <= 0) {
-        errors.duration = "Duration must end in the future.";
+    } else if (loadState.status === "ready" && formValues.account && formValues.permissionSet) {
+      const permittedEntry = loadState.permitted.find(
+        (p) =>
+          p.accountId === formValues.account!.value &&
+          p.permissionSetArn === formValues.permissionSet!.value
+      );
+      if (
+        permittedEntry?.maxDurationMinutes != null &&
+        requestedMinutes > permittedEntry.maxDurationMinutes
+      ) {
+        errors.duration = `Duration exceeds the policy limit of ${formatDuration(permittedEntry.maxDurationMinutes)}.`;
         valid = false;
-      } else if (loadState.status === "ready" && formValues.account && formValues.permissionSet) {
-        const permittedEntry = loadState.permitted.find(
-          (p) =>
-            p.accountId === formValues.account!.value &&
-            p.permissionSetArn === formValues.permissionSet!.value
-        );
-        if (
-          permittedEntry?.maxDurationMinutes != null &&
-          requestedMinutes > permittedEntry.maxDurationMinutes
-        ) {
-          errors.duration = `Duration exceeds the policy limit of ${formatDuration(permittedEntry.maxDurationMinutes)}.`;
-          valid = false;
-        }
       }
     }
 
@@ -318,12 +329,11 @@ export function RequestAccessPage() {
         idcUserEmail: loadState.idcUserEmail,
         idcUserDisplayName: loadState.idcUserDisplayName,
         accountId: formValues.account!.value ?? "",
+        accountName: loadState.accountNames.get(formValues.account!.value ?? "") ?? "",
         permissionSetArn: formValues.permissionSet!.value ?? "",
         permissionSetName:
           permittedEntry?.permissionSetName ?? formValues.permissionSet!.label ?? "",
-        durationMinutes: Math.round(
-          (new Date(`${formValues.durationDate}T${formValues.durationTime}`).getTime() - Date.now()) / 60000
-        ),
+        durationMinutes: durationToMinutes(formValues.durationValue, formValues.durationUnit),
         requiresApproval: permittedEntry?.requiresApproval ?? false,
         justification: formValues.justification.trim(),
         startTime: formValues.startTimeDate
@@ -492,16 +502,11 @@ export function RequestAccessPage() {
                 <Select
                   selectedOption={formValues.account}
                   onChange={({ detail }) =>
-                    setFormValues({
+                    setFormValues((prev) => ({
+                      ...prev,
                       account: detail.selectedOption,
-                      // Reset permission set when account changes
                       permissionSet: null,
-                      durationDate: formValues.durationDate,
-                      durationTime: formValues.durationTime,
-                      justification: formValues.justification,
-                      startTimeDate: formValues.startTimeDate,
-                      startTimeTime: formValues.startTimeTime,
-                    })
+                    }))
                   }
                   options={accountOptions()}
                   filteringType="auto"
@@ -553,32 +558,30 @@ export function RequestAccessPage() {
 
               <FormField
                 label="Duration"
-                description="Select the date and time when your access should end. Duration is calculated from now to that point."
+                description="How long you need access. The countdown starts when access is granted."
                 errorText={formErrors.duration}
               >
                 <SpaceBetween direction="horizontal" size="xs">
-                  <DatePicker
-                    value={formValues.durationDate}
+                  <Input
+                    type="number"
+                    value={formValues.durationValue}
                     onChange={({ detail }) =>
-                      setFormValues((prev) => ({ ...prev, durationDate: detail.value }))
+                      setFormValues((prev) => ({ ...prev, durationValue: detail.value }))
                     }
-                    placeholder="YYYY/MM/DD"
-                    isDateEnabled={(date) => {
-                      const today = new Date();
-                      today.setHours(0, 0, 0, 0);
-                      const maxDate = new Date(today.getTime() + 365 * 86400000);
-                      return date >= today && date <= maxDate;
-                    }}
+                    placeholder="e.g. 8"
                   />
-                  <TimeInput
-                    format="hh:mm"
-                    placeholder="hh:mm"
-                    use24Hour={true}
-                    value={formValues.durationTime}
-                    onChange={({ detail }) =>
-                      setFormValues((prev) => ({ ...prev, durationTime: detail.value }))
+                  <Select
+                    selectedOption={
+                      DURATION_UNIT_OPTIONS.find((o) => o.value === formValues.durationUnit) ??
+                      DURATION_UNIT_OPTIONS[1]
                     }
-                    disabled={!formValues.durationDate}
+                    onChange={({ detail }) =>
+                      setFormValues((prev) => ({
+                        ...prev,
+                        durationUnit: detail.selectedOption.value as DurationUnit,
+                      }))
+                    }
+                    options={DURATION_UNIT_OPTIONS}
                   />
                 </SpaceBetween>
               </FormField>

@@ -37,6 +37,8 @@ async function sendSlackNotification(
   const requesterName = (request.idcUserDisplayName as string | null) ?? "Unknown";
   const requesterEmail = (request.idcUserEmail as string | null) ?? "";
   const accountId = request.accountId as string;
+  const accountName = (request.accountName as string | null) ?? null;
+  const accountLabel = accountName ? `${accountName} (${accountId})` : accountId;
   const permissionSetName =
     (request.permissionSetName as string | null) ?? (request.permissionSetArn as string);
   const durationMinutes = request.durationMinutes as number;
@@ -51,7 +53,7 @@ async function sendSlackNotification(
       type: "section",
       fields: [
         { type: "mrkdwn", text: `*Requester:*\n${requesterName} (${requesterEmail})` },
-        { type: "mrkdwn", text: `*Account:*\n${accountId}` },
+        { type: "mrkdwn", text: `*Account:*\n${accountLabel}` },
         { type: "mrkdwn", text: `*Permission Set:*\n${permissionSetName}` },
         { type: "mrkdwn", text: `*Duration:*\n${formatDurationMinutes(durationMinutes)}` },
         { type: "mrkdwn", text: `*Justification:*\n${justification}` },

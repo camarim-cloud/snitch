@@ -108,6 +108,7 @@ const REQUEST_ITEM = {
   taskToken: "sfn-token",
   idcUserEmail: "requester@example.com",
   accountId: "111111111111",
+  accountName: "Production Account",
   permissionSetArn: "arn:aws:sso:::permissionSet/ssoins-1/ps-read",
   durationMinutes: 60,
   idcUserId: "idc-user",

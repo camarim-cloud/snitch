@@ -14,6 +14,7 @@ type RequestAccessInput = {
   idcUserEmail?: string | null;
   idcUserDisplayName?: string | null;
   accountId: string;
+  accountName?: string | null;
   permissionSetArn: string;
   permissionSetName: string;
   durationMinutes: number;
@@ -32,6 +33,7 @@ export type AccessRequest = {
   idcUserEmail: string | null;
   idcUserDisplayName: string | null;
   accountId: string;
+  accountName: string | null;
   permissionSetArn: string;
   permissionSetName: string;
   durationMinutes: number;
@@ -85,6 +87,7 @@ export const handler = async (event: AppSyncEvent): Promise<AccessRequest> => {
     idcUserEmail: args.idcUserEmail ?? null,
     idcUserDisplayName: args.idcUserDisplayName ?? null,
     accountId: args.accountId,
+    accountName: args.accountName ?? null,
     permissionSetArn: args.permissionSetArn,
     permissionSetName: args.permissionSetName,
     durationMinutes: args.durationMinutes,

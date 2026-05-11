@@ -198,7 +198,7 @@ describe("RequestAccessPage", () => {
       expect(screen.getByText("Select an account.")).toBeInTheDocument();
       expect(screen.getByText("Select a permission set.")).toBeInTheDocument();
       expect(
-        screen.getByText(/select a date and enter a time/i)
+        screen.getByText(/enter a valid duration greater than zero/i)
       ).toBeInTheDocument();
       expect(
         screen.getByText(/explain why you need this access/i)
@@ -317,8 +317,8 @@ describe("RequestAccessPage", () => {
 
     it("a time entered alongside a past date triggers the start time error", async () => {
       await openModal();
-      createWrapper().findAllDatePickers()[1].setInputValue("2020/01/01");
-      createWrapper().findAllTimeInputs()[1].setInputValue("10:00");
+      createWrapper().findAllDatePickers()[0].setInputValue("2020/01/01");
+      createWrapper().findAllTimeInputs()[0].setInputValue("10:00");
       await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
       expect(
         screen.getByText("Start time must be in the future.")
@@ -327,7 +327,7 @@ describe("RequestAccessPage", () => {
 
     it("shows 'Start time must be in the future.' when the date is in the past", async () => {
       await openModal();
-      createWrapper().findAllDatePickers()[1].setInputValue("2020/01/01");
+      createWrapper().findAllDatePickers()[0].setInputValue("2020/01/01");
       await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
       expect(
         screen.getByText("Start time must be in the future.")
@@ -364,7 +364,7 @@ describe("RequestAccessPage", () => {
 
       // Open → set a past date → submit → error appears
       await userEvent.click(screen.getByRole("button", { name: /new request/i }));
-      createWrapper().findAllDatePickers()[1].setInputValue("2020/01/01");
+      createWrapper().findAllDatePickers()[0].setInputValue("2020/01/01");
       await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
       expect(
         screen.getByText("Start time must be in the future.")
@@ -385,14 +385,14 @@ describe("RequestAccessPage", () => {
       await waitFor(() => screen.getByRole("button", { name: /new request/i }));
 
       await userEvent.click(screen.getByRole("button", { name: /new request/i }));
-      createWrapper().findAllDatePickers()[1].setInputValue("2027/01/01");
-      expect(createWrapper().findAllDatePickers()[1].getInputValue()).toBe("2027/01/01");
+      createWrapper().findAllDatePickers()[0].setInputValue("2027/01/01");
+      expect(createWrapper().findAllDatePickers()[0].getInputValue()).toBe("2027/01/01");
 
       const dialog = screen.getByRole("dialog", { name: /new access request/i });
       await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
       await userEvent.click(screen.getByRole("button", { name: /new request/i }));
 
-      expect(createWrapper().findAllDatePickers()[1].getInputValue()).toBe("");
+      expect(createWrapper().findAllDatePickers()[0].getInputValue()).toBe("");
     });
   });
 });

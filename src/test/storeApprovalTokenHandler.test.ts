@@ -43,6 +43,7 @@ const REQUEST_ITEM = {
   idcUserDisplayName: "Alice Smith",
   idcUserEmail: "alice@example.com",
   accountId: "111111111111",
+  accountName: "Production Account",
   permissionSetArn: "arn:aws:sso:::permissionSet/ssoins-1/ps-read",
   permissionSetName: "ReadOnly",
   durationMinutes: 60,
@@ -138,8 +139,37 @@ describe("storeApprovalTokenHandler", () => {
     expect(blockText).toContain("Alice Smith");
     expect(blockText).toContain("alice@example.com");
     expect(blockText).toContain("111111111111");
+    expect(blockText).toContain("Production Account");
     expect(blockText).toContain("ReadOnly");
     expect(blockText).toContain("Need access for incident investigation");
+  });
+
+  it("shows accountName (accountId) when accountName is stored on the request", async () => {
+    mockDynamoSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: REQUEST_ITEM })
+      .mockResolvedValueOnce({ Item: SLACK_SETTINGS });
+
+    await handler(BASE_INPUT);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const accountField = JSON.stringify(body.blocks[1].fields[1]);
+    expect(accountField).toContain("Production Account (111111111111)");
+  });
+
+  it("shows only accountId when accountName is not stored on the request", async () => {
+    const itemWithoutName = { ...REQUEST_ITEM, accountName: null };
+    mockDynamoSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: itemWithoutName })
+      .mockResolvedValueOnce({ Item: SLACK_SETTINGS });
+
+    await handler(BASE_INPUT);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const accountField = JSON.stringify(body.blocks[1].fields[1]);
+    expect(accountField).toContain("111111111111");
+    expect(accountField).not.toContain("(111111111111)");
   });
 
   it("includes Approve and Reject buttons that carry the requestId as value", async () => {

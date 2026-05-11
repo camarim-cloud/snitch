@@ -36,6 +36,7 @@ const BASE_ARGS = {
   idcUserEmail: "requester@example.com",
   idcUserDisplayName: "Test User",
   accountId: "111111111111",
+  accountName: "Production Account",
   permissionSetArn: "arn:aws:sso:::permissionSet/ssoins-1/ps-read",
   permissionSetName: "ReadOnly",
   durationMinutes: 60,
