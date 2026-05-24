@@ -43,10 +43,17 @@ npm run sandbox          # Deploy Amplify sandbox
 ```
 snitch/
 ├── amplify/
-│   ├── auth/resource.ts        # Cognito config; defines the "Admins" user pool group
+│   ├── auth/resource.ts        # Cognito config; email login + pre-token generation trigger
+│   ├── authConfig.ts           # Reads COGNITO_DOMAIN_PREFIX, APP_CALLBACK_URL,
+│   │                           # IDC_IDENTITY_STORE_ID, ADMIN_GROUP_NAME from Secrets Manager
+│   │                           # at CDK synth time (execSync). Values become plain strings in CF.
 │   ├── data/resource.ts        # AppSync schema: PrivilegedPolicy model + AVP-backed mutations
-│   ├── backend.ts              # CDK wiring: AVP policy store, AppSettingsTable, IAM grants, env vars
+│   ├── backend.ts              # CDK wiring: SAML/OAuth CDK escape hatch, AVP policy store,
+│   │                           # AppSettingsTable, IAM grants, env vars
 │   └── functions/
+│       ├── auth/
+│       │   ├── resource.ts                    # pre-token-generation function (resourceGroupName: "auth")
+│       │   └── preTokenGenerationHandler.ts   # Injects IDC groups into cognito:groups at token issue time
 │       ├── awsResources/       # Lambda resolvers: list IDC users/groups, accounts, OUs, permission sets
 │       ├── settings/
 │       │   ├── resource.ts               # Function definitions for getSettings and updateSettings
@@ -77,7 +84,7 @@ snitch/
 │   ├── test/
 │   │   └── setup.ts            # Vitest setup (jest-dom matchers)
 │   ├── App.tsx
-│   └── main.tsx                # Entry point with Amplify config
+│   └── main.tsx                # Entry point: Amplify config + AuthRedirect (signInWithRedirect flow)
 ├── amplify_outputs.json        # Generated backend outputs
 ├── vite.config.ts
 └── tsconfig.json
@@ -271,6 +278,8 @@ permit (
 
 | Variable | Used by |
 |---|---|
+| `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
+| `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
 | `AVP_POLICY_STORE_ID` | All AVP-touching handlers (create/update/delete policies, evaluate access, approve/reject/listPending) |
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD handlers + evaluateAccess |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
@@ -565,7 +574,18 @@ This means: non-admin users who are configured as approvers (via an `ApprovalPol
 
 The `ApproveRequestsPage` route has **no `AdminGuard`** — it is accessible to all authenticated users.
 
-**AppSync identity — access token, not ID token.** AppSync forwards the Cognito **access token** to Lambda resolvers, not the ID token. The access token's claims only include `sub`, `cognito:groups`, and standard OIDC fields — custom attributes like `email` are absent. Any identity comparison in a Lambda handler must use `event.identity.username` (the Cognito sub/UUID) rather than email claims.
+**AppSync identity — access token, not ID token.** AppSync forwards the Cognito **access token** to Lambda resolvers, not the ID token. The access token's claims only include `sub`, `cognito:groups`, and standard OIDC fields — custom attributes like `email` are absent.
+
+For SAML-federated users (IDC), `event.identity.username` is the Cognito federated username in the format `idc_<samlNameId>`, where the NameID is the user's email. To recover the email, strip the `idc_` prefix:
+
+```typescript
+const IDC_USERNAME_PREFIX = "idc_";
+const email = username.startsWith(IDC_USERNAME_PREFIX)
+  ? username.slice(IDC_USERNAME_PREFIX.length)
+  : undefined;
+```
+
+This pattern is used in `getMyIDCUserHandler.ts`. Never read `event.identity.claims["email"]` — it is absent from access tokens.
 
 ### `amplify/data/resource.ts` is the GraphQL contract
 

@@ -1,10 +1,14 @@
 import { defineBackend } from "@aws-amplify/backend";
-import { CfnUserPoolGroup } from "aws-cdk-lib/aws-cognito";
+import {
+  CfnUserPoolDomain,
+  CfnUserPoolIdentityProvider,
+} from "aws-cdk-lib/aws-cognito";
 import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Function as LambdaFunction, FunctionUrlAuthType } from "aws-cdk-lib/aws-lambda";
 import { CfnPolicyStore } from "aws-cdk-lib/aws-verifiedpermissions";
-import { RemovalPolicy } from "aws-cdk-lib";
+import { RemovalPolicy, SecretValue, Stack } from "aws-cdk-lib";
+import { outputDomainPrefix, outputCallbackUrl, outputIdentityStoreId, outputAdminGroupName } from "./authConfig";
 import { setupAccessRequestWorkflow } from "./accessRequestWorkflow";
 import { auth } from "./auth/resource";
 import { data } from "./data/resource";
@@ -46,6 +50,7 @@ import {
   updateSettingsFunction,
 } from "./functions/settings/resource";
 import { slackInteractiveFunction } from "./functions/slackInteractions/resource";
+import { preTokenGenerationFunction } from "./functions/auth/resource";
 
 const backend = defineBackend({
   auth,
@@ -80,16 +85,84 @@ const backend = defineBackend({
   getSettingsFunction,
   updateSettingsFunction,
   slackInteractiveFunction,
+  preTokenGenerationFunction,
 });
-
-// ─── Cognito Admins group ─────────────────────────────────────────────────────
 
 const { userPool } = backend.auth.resources;
-new CfnUserPoolGroup(userPool, "AdminsGroup", {
+
+// ─── SAML / OAuth — all config sourced from Secrets Manager ──────────────────
+// Values are CloudFormation dynamic references ({{resolve:secretsmanager:...}})
+// resolved at deploy time. No environment variables are required.
+
+const authStack = Stack.of(backend.auth.resources.cfnResources.cfnUserPool);
+// Use the secret NAME (not ARN) in dynamic references. Amplify sandbox uses
+// environment-agnostic nested stacks, so Secret.fromSecretNameV2 would embed
+// ${AWS::Region}/${AWS::AccountId} pseudo-parameters inside the {{resolve:...}}
+// string — CloudFormation cannot expand intrinsics there, causing ResourceNotFoundException.
+// SecretValue.secretsManager with a literal name produces a static reference that works.
+const metadataUrl  = SecretValue.secretsManager("snitch/auth-config", { jsonField: "IDC_SAML_METADATA_URL" }).unsafeUnwrap();
+
+const samlProvider = new CfnUserPoolIdentityProvider(authStack, "IDCSAMLProvider", {
   userPoolId: userPool.userPoolId,
-  groupName: "Admins",
-  description: "Administrators with access to privileged policies",
+  providerName: "IDC",
+  providerType: "SAML",
+  providerDetails: {
+    MetadataURL: metadataUrl,
+    IDPSignout: "false",
+  },
+  attributeMapping: { email: "email" },
 });
+
+const { cfnUserPoolClient } = backend.auth.resources.cfnResources;
+cfnUserPoolClient.allowedOAuthFlows = ["code"];
+cfnUserPoolClient.allowedOAuthScopes = ["openid", "email", "profile"];
+cfnUserPoolClient.allowedOAuthFlowsUserPoolClient = true;
+cfnUserPoolClient.supportedIdentityProviders = ["IDC"];
+cfnUserPoolClient.addDependency(samlProvider);
+
+
+backend.addOutput({
+  custom: {
+    cognitoOAuthDomain: `${outputDomainPrefix}.auth.${authStack.region}.amazoncognito.com`,
+    cognitoCallbackUrl: outputCallbackUrl,
+  },
+});
+
+cfnUserPoolClient.callbackUrLs = [outputCallbackUrl, "http://localhost:5173"];
+cfnUserPoolClient.logoutUrLs  = [outputCallbackUrl, "http://localhost:5173"];
+
+new CfnUserPoolDomain(authStack, "CognitoDomain", {
+  userPoolId: userPool.userPoolId,
+  domain: outputDomainPrefix,
+  managedLoginVersion: 2,
+
+});
+
+// ─── Pre-token generation Lambda — injects IDC groups into cognito:groups ────
+
+backend.preTokenGenerationFunction.resources.lambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: [
+      "identitystore:ListUsers",
+      "identitystore:ListGroupMembershipsForMember",
+      "identitystore:DescribeGroup",
+    ],
+    resources: ["*"],
+  })
+);
+// IDC_IDENTITY_STORE_ID and ADMIN_GROUP_NAME are resolved from Secrets Manager at CDK
+// synth time (via authConfig.ts) and embedded as plain strings in the Lambda env vars.
+// This avoids both CloudFormation {{resolve:...}} limitations in nested-stack env vars
+// and the need for a runtime secretsmanager:GetSecretValue IAM permission.
+(backend.preTokenGenerationFunction.resources.lambda as LambdaFunction).addEnvironment(
+  "IDC_IDENTITY_STORE_ID",
+  outputIdentityStoreId
+);
+(backend.preTokenGenerationFunction.resources.lambda as LambdaFunction).addEnvironment(
+  "ADMIN_GROUP_NAME",
+  outputAdminGroupName
+);
 
 // ─── AWS resource Lambda permissions ─────────────────────────────────────────
 
@@ -119,20 +192,6 @@ for (const fn of [
   fn.resources.lambda.addToRolePolicy(awsResourcePolicy);
 }
 
-// getMyIDCUser additionally needs to look up the Cognito user by sub to
-// retrieve the email attribute — required because AppSync may forward the
-// access token (which has no email claim) instead of the ID token.
-backend.getMyIDCUserFunction.resources.lambda.addToRolePolicy(
-  new PolicyStatement({
-    effect: Effect.ALLOW,
-    actions: ["cognito-idp:AdminGetUser"],
-    resources: [userPool.userPoolArn],
-  })
-);
-(backend.getMyIDCUserFunction.resources.lambda as LambdaFunction).addEnvironment(
-  "AUTH_USER_POOL_ID",
-  userPool.userPoolId
-);
 
 const cognitoListPolicy = new PolicyStatement({
   effect: Effect.ALLOW,

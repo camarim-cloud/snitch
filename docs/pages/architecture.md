@@ -1,7 +1,7 @@
 ---
 title: Architecture
 layout: default
-nav_order: 3
+nav_order: 4
 ---
 
 # Architecture
@@ -49,6 +49,7 @@ All infrastructure is defined in `amplify/` as CDK code and deployed via Amplify
 
 | Stack | File | Owns |
 |---|---|---|
+| `auth` | `amplify/auth/resource.ts` + `amplify/backend.ts` (SAML section) | Cognito User Pool, Hosted UI domain, SAML identity provider, app client OAuth config, pre-token generation Lambda |
 | `data` | `amplify/data/resource.ts` + `amplify/backend.ts` | AppSync schema, Lambda resolvers, IAM grants, AVP policy store, `AppSettingsTable` |
 | `AccessRequestWorkflow` | `amplify/accessRequestWorkflow.ts` | `AccessRequestTable`, Step Functions state machine, workflow Lambdas |
 
@@ -113,7 +114,26 @@ All IAM `PolicyStatement` additions live in `amplify/backend.ts`. Lambda functio
 
 AppSync forwards the Cognito **access token** to Lambda resolvers — not the ID token. The access token only contains `sub`, `cognito:groups`, and standard OIDC fields. Custom attributes such as `email` are absent.
 
-**Consequence:** identity comparisons in Lambda handlers must use `event.identity.username` (the Cognito sub/UUID), never email claims.
+### Federated Username Format
+
+For SAML-federated users (IDC), Cognito formats the username as:
+
+```
+<providerName>_<samlNameId>
+```
+
+The provider name is `IDC` (stored lowercase), and the NameID is the user's email (as configured in the IDC attribute mapping). So the username for `alice@example.com` is `idc_alice@example.com`.
+
+Lambda handlers that need the user's email extract it from `event.identity.username`:
+
+```typescript
+const IDC_USERNAME_PREFIX = "idc_";
+const email = username.startsWith(IDC_USERNAME_PREFIX)
+  ? username.slice(IDC_USERNAME_PREFIX.length)
+  : undefined;
+```
+
+This pattern is implemented in `getMyIDCUserHandler.ts`. Other handlers that need to identify the caller should follow the same approach rather than reading `event.identity.claims["email"]`, which is never present in the access token.
 
 ---
 
@@ -122,11 +142,16 @@ AppSync forwards the Cognito **access token** to Lambda resolvers — not the ID
 ```
 snitch/
 ├── amplify/
-│   ├── auth/resource.ts              # Cognito — defines the "Admins" user pool group
+│   ├── auth/resource.ts              # Cognito — email login + pre-token generation trigger
+│   ├── authConfig.ts                 # Reads COGNITO_DOMAIN_PREFIX, APP_CALLBACK_URL,
+│   │                                 # IDC_IDENTITY_STORE_ID, ADMIN_GROUP_NAME from
+│   │                                 # Secrets Manager at CDK synth time
 │   ├── data/resource.ts              # AppSync schema: models + custom resolvers
-│   ├── backend.ts                    # CDK wiring: AVP policy store, IAM grants, env vars
+│   ├── backend.ts                    # CDK wiring: SAML/OAuth escape hatch, AVP policy store,
+│   │                                 # IAM grants, env vars
 │   ├── accessRequestWorkflow.ts      # Step Functions state machine + AccessRequestTable
 │   └── functions/
+│       ├── auth/                     # Pre-token generation Lambda (injects IDC groups)
 │       ├── awsResources/             # Lambda resolvers: IDC, Organizations, SSO Admin
 │       ├── settings/                 # getSettings / updateSettings handlers
 │       ├── verifiedPermissions/      # Cedar policy CRUD + access evaluation

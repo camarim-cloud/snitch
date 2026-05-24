@@ -173,12 +173,17 @@ Write **why**, not what. Only add a comment when the reason is non-obvious: a hi
 
 ## Environment Variables
 
-| Variable | Used by |
-|---|---|
-| `AVP_POLICY_STORE_ID` | All AVP-touching handlers |
-| `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD + evaluateAccess |
-| `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
-| `ACCESS_REQUEST_TABLE_NAME` | All access-request handlers |
-| `APP_SETTINGS_TABLE_NAME` | `getSettingsHandler`, `updateSettingsHandler`, `getCloudTrailLogsHandler` |
+| Variable | Used by | Source |
+|---|---|---|
+| `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` | Read from `snitch/auth-config` secret at CDK synth time via `authConfig.ts` |
+| `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` | Read from `snitch/auth-config` secret at CDK synth time via `authConfig.ts` |
+| `AVP_POLICY_STORE_ID` | All AVP-touching handlers | CDK token resolved at deploy time |
+| `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD + evaluateAccess | CDK token resolved at deploy time |
+| `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` | CDK token resolved at deploy time |
+| `ACCESS_REQUEST_TABLE_NAME` | All access-request handlers | CDK token resolved at deploy time |
+| `APP_SETTINGS_TABLE_NAME` | `getSettingsHandler`, `updateSettingsHandler`, `getCloudTrailLogsHandler` | CDK token resolved at deploy time |
 
 All are set in `amplify/backend.ts` via `addEnvironment(...)` on each function resource.
+
+{: .note }
+`IDC_IDENTITY_STORE_ID` and `ADMIN_GROUP_NAME` are plain string values embedded at CDK synthesis time — they are **not** CloudFormation dynamic references (`{{resolve:secretsmanager:...}}`). This is intentional: Lambda environment variables in Amplify Gen 2's nested stacks cannot resolve dynamic references because CDK generates environment-agnostic stacks with pseudo-parameter ARNs that CloudFormation cannot expand inside `{{resolve:...}}` strings.

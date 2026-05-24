@@ -39,6 +39,18 @@ npm install
 
 ---
 
+## Before Deploying — IAM Identity Center Setup
+
+Authentication is federated through IAM Identity Center via SAML 2.0. Before running `npm run sandbox`, you must:
+
+1. Register a SAML 2.0 application in IAM Identity Center.
+2. Get your Identity Store ID.
+3. Create an AWS Secrets Manager secret at `snitch/auth-config`.
+
+See the **[IAM Identity Center Setup]({% link pages/idc-saml-setup.md %})** guide for step-by-step instructions.
+
+---
+
 ## Deploy the Backend Sandbox
 
 Amplify Gen 2 provisions all backend resources (Cognito, AppSync, DynamoDB, Lambda, Step Functions, AVP) in an isolated personal sandbox environment:
@@ -71,28 +83,25 @@ The app starts at [http://localhost:5173](http://localhost:5173).
 
 ## First-Time Setup
 
-### 1. Create an Admin User
+### 1. Update the SAML Audience URI
 
-1. Open the app and sign up with an email and password.
-2. In the **AWS Console → Cognito → User Pools**, find the pool created by Amplify.
-3. Add the new user to the **`Admins`** group to grant admin access.
+After the first deploy, Cognito's User Pool ID is known. Update the **Application SAML audience** in the IDC console to:
 
-### 2. Configure CloudTrail Log Group (Optional)
+```
+urn:amazon:cognito:sp:<USER_POOL_ID>
+```
 
-Admin pages include a **Settings** page where you can configure the CloudWatch log group that receives CloudTrail events. This enables the audit trail feature on the Elevated Access page.
+See [Step 5 of the IAM Identity Center Setup guide]({% link pages/idc-saml-setup.md %}#step-5--deploy-and-update-the-audience-uri) for details.
 
-Navigate to **Settings** (admin only) and enter the log group name.
+### 2. Grant Admin Access
 
-### 3. Configure IDC Resources
+Admin pages are gated by membership in the IDC group whose display name matches `ADMIN_GROUP_NAME` in the `snitch/auth-config` secret. Add users to that IDC group to grant them admin access — no Cognito console changes are needed.
 
-Snitch requires IAM Identity Center to be set up in your AWS account. The following resources are discovered at runtime via the AWS APIs:
+### 3. Configure CloudTrail Log Group (Optional)
 
-- IDC Users and Groups
-- AWS Accounts (via Organizations)
-- Organizational Units
-- Permission Sets
+IDC Users, Groups, AWS Accounts, Organizational Units, and Permission Sets are all fetched live from AWS APIs — no manual configuration is needed.
 
-No manual configuration is needed — these are fetched live when admins build policies.
+To enable the CloudTrail audit trail on the Elevated Access page, navigate to **Settings** (admin only) and enter the CloudWatch log group name where CloudTrail delivers events.
 
 ---
 

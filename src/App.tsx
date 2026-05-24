@@ -78,7 +78,7 @@ function App() {
         utilities={[
           {
             type: "button",
-            text: user?.signInDetails?.loginId ?? "User",
+            text: user?.username ?? "User",
             iconName: "user-profile",
           },
           {
