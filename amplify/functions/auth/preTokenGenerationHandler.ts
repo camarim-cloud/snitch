@@ -13,8 +13,21 @@ const ADMIN_GROUP_NAME = process.env.ADMIN_GROUP_NAME!;
 
 const identitystore = new IdentitystoreClient({ region: REGION });
 
+const IDC_USERNAME_PREFIX = "idc_";
+
 export const handler: PreTokenGenerationV2TriggerHandler = async (event) => {
-  const email = event.request.userAttributes["email"];
+  // For SAML-federated IDC users, userAttributes["email"] may be absent if IDC
+  // doesn't send the email as a separate SAML attribute. The Cognito username is
+  // always set to "idc_<samlNameId>" where the NameID is the user's email, so we
+  // fall back to stripping that prefix (same pattern as getMyIDCUserHandler).
+  const email =
+    event.request.userAttributes["email"] ||
+    (event.userName.startsWith(IDC_USERNAME_PREFIX)
+      ? event.userName.slice(IDC_USERNAME_PREFIX.length)
+      : undefined);
+
+  console.log(JSON.stringify({ msg: "pre-token-generation", userName: event.userName, email: email ?? null }));
+
   if (!email) return event;
 
   // Find IDC user by email (IdentityStore uses UserName = email for IDC-managed users)
@@ -25,6 +38,7 @@ export const handler: PreTokenGenerationV2TriggerHandler = async (event) => {
     })
   );
   const idcUserId = listResult.Users?.[0]?.UserId;
+  console.log(JSON.stringify({ msg: "idc-lookup", email, idcUserId: idcUserId ?? null }));
   if (!idcUserId) return event;
 
   const memberships = await identitystore.send(
@@ -51,6 +65,8 @@ export const handler: PreTokenGenerationV2TriggerHandler = async (event) => {
   const cognitoGroups = groupNames.includes(ADMIN_GROUP_NAME)
     ? [...groupNames, "Admins"]
     : groupNames;
+
+  console.log(JSON.stringify({ msg: "groups-resolved", ADMIN_GROUP_NAME, groupNames, cognitoGroups }));
 
   event.response = {
     claimsAndScopeOverrideDetails: {

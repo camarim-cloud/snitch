@@ -174,6 +174,17 @@ backend.preTokenGenerationFunction.resources.lambda.addToRolePolicy(
   outputAdminGroupName
 );
 
+// Amplify Gen 2 registers preTokenGeneration as V1 (LambdaConfig.PreTokenGeneration).
+// V2 is required so the Lambda can use claimsAndScopeOverrideDetails in its response.
+// We use a CDK escape hatch to replace V1 with PreTokenGenerationConfig (V2_0) on the
+// CfnUserPool. AWS rejects templates that specify both fields simultaneously.
+const { cfnUserPool } = backend.auth.resources.cfnResources;
+cfnUserPool.addPropertyOverride("LambdaConfig.PreTokenGenerationConfig", {
+  LambdaArn: (backend.preTokenGenerationFunction.resources.lambda as LambdaFunction).functionArn,
+  LambdaVersion: "V2_0",
+});
+cfnUserPool.addPropertyDeletionOverride("LambdaConfig.PreTokenGeneration");
+
 // ─── AWS resource Lambda permissions ─────────────────────────────────────────
 
 const awsResourcePolicy = new PolicyStatement({
