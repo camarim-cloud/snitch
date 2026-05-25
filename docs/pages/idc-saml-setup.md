@@ -21,7 +21,8 @@ Snitch authenticates users through **IAM Identity Center (IDC)** via SAML 2.0 fe
 
 ```
 User → App (unauthenticated)
-     → signInWithRedirect (Amplify) → Cognito Hosted UI
+     → signInWithRedirect() [Amplify, no provider] → Cognito Managed Login page
+     → User clicks "Sign in with IDC"
      → Cognito redirects to IDC SAML endpoint
      → User authenticates in IDC
      → IDC issues SAML assertion → Cognito validates
@@ -29,13 +30,22 @@ User → App (unauthenticated)
          1. Looks up the IDC user by email in IdentityStore
          2. Fetches the user's IDC group memberships
          3. Injects group names + "Admins" (if admin group matches) into cognito:groups
-     → Cognito issues tokens → App authenticated
+     → Cognito issues tokens → App authenticated (Hub signedIn event fires)
+
+User → clicks "Sign out" in the app
+     → amplifySignOut() → Cognito logout endpoint
+     → Cognito clears session → redirects back to app
+     → App calls signInWithRedirect() → Cognito Managed Login page shown again
 ```
 
 All configuration lives in a single **AWS Secrets Manager** secret (`snitch/auth-config`). CDK reads the secret in two ways:
 
 - **At synth time** (`amplify/authConfig.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are read via the AWS CLI during `npm run sandbox`. Their resolved values are embedded as plain strings in the CloudFormation template and `amplify_outputs.json`.
 - **At deploy time via CloudFormation dynamic reference**: `IDC_SAML_METADATA_URL` is referenced as `{{resolve:secretsmanager:snitch/auth-config:SecretString:IDC_SAML_METADATA_URL}}` in the SAML identity provider resource property, where CloudFormation supports this expansion.
+
+### Managed Login Page
+
+Cognito's managed login page (`managedLoginVersion: 2`) serves as both the sign-in page and the post-logout landing page. CDK provisions it with `CfnManagedLoginBranding` using `useCognitoProvidedValues: true`, which applies Cognito's built-in default style without requiring custom assets. The frontend uses `signInWithRedirect()` without a provider argument so that Amplify stores PKCE state before the redirect — this is required for the OAuth code exchange to succeed when Cognito redirects back with `?code=`.
 
 ---
 
@@ -179,11 +189,12 @@ Until this is updated, authentication will fail with a SAML audience mismatch er
 
 After updating the Audience URI:
 
-1. Open the app — it should redirect to the Cognito Hosted UI, then to the IDC login page.
-2. Authenticate with an IDC user that is assigned to the application.
-3. After successful login, the top navigation should display the user's username.
-4. For a user that belongs to the `ADMIN_GROUP_NAME` IDC group: navigate to **Privileged Policies** — the page loads.
-5. For a user that does NOT belong to `ADMIN_GROUP_NAME`: the same route shows **Access denied**.
+1. Open the app — it should redirect to the Cognito managed login page showing a **"Sign in with IDC"** button.
+2. Click **"Sign in with IDC"** and authenticate with an IDC user assigned to the application.
+3. After successful login, the top navigation should display the user's email (without the `idc_` prefix).
+4. Click **"Sign out"** — the browser should return to the Cognito managed login page, not re-authenticate automatically.
+5. For a user that belongs to the `ADMIN_GROUP_NAME` IDC group: navigate to **Privileged Policies** — the page loads.
+6. For a user that does NOT belong to `ADMIN_GROUP_NAME`: the same route shows **Access denied**.
 
 ---
 
@@ -213,3 +224,6 @@ npm run sandbox
 | `getMyIDCUser` returns `null` after login | IDC `UserName` attribute doesn't match the user's email | Verify the IDC attribute mapping in Step 2 maps `email` to `${user:email}` |
 | `PreTokenGeneration failed: not authorized to perform secretsmanager:GetSecretValue` | Pre-token Lambda was deployed before the IAM policy or env vars were applied | Run `npm run sandbox` to redeploy — `IDC_IDENTITY_STORE_ID` and `ADMIN_GROUP_NAME` are now embedded at synth time, no IAM permission needed |
 | Admin pages show **Access denied** after login even for admin users | Pre-token generation Lambda didn't inject IDC groups (e.g., `IDC_IDENTITY_STORE_ID` env var was empty on first deploy) | Run `npm run sandbox` to redeploy the Lambda with the correct env vars, then sign out and back in to get a fresh token |
+| Managed login page shows **"Login pages unavailable"** | `CfnManagedLoginBranding` resource not yet deployed, or `managedLoginVersion: 2` not set on the domain | Run `npm run sandbox` — CDK provisions both the domain and the branding resource automatically |
+| App stays on spinner forever after Cognito redirects back with `?code=` | PKCE state was not stored (e.g., previous code used `window.location.href` directly to Cognito, bypassing Amplify) | Ensure `signInWithRedirect()` is always called to initiate the flow — never redirect to the Cognito login URL directly |
+| After sign-out, the app immediately re-authenticates instead of showing the login page | `amplifySignOut()` was not called (e.g., a raw `window.location.href` sign-out that skipped Cognito's logout endpoint) | The sign-out button must call `amplifySignOut()` so Cognito's session cookie is cleared before Cognito redirects back |

@@ -7,7 +7,6 @@ import { Hub } from "aws-amplify/utils";
 import { Authenticator } from "@aws-amplify/ui-react";
 import Spinner from "@cloudscape-design/components/spinner";
 import Box from "@cloudscape-design/components/box";
-import Button from "@cloudscape-design/components/button";
 import "@cloudscape-design/global-styles/index.css";
 import App from "./App";
 import outputs from "../amplify_outputs.json";
@@ -34,59 +33,28 @@ Amplify.configure({
 
 function AuthRedirect({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
-    // When Cognito redirects back with ?code=&state=, Amplify is already processing
-    // the token exchange. Calling getCurrentUser() here would fail (exchange not done
-    // yet) and the catch would trigger another signInWithRedirect, causing an infinite
-    // loop. Skip the check and let the Hub signedIn event resolve it instead.
+    // Register the Hub listener synchronously first so we cannot miss the
+    // signedIn event that fires when Amplify completes the OAuth code exchange.
+    const unsubscribe = Hub.listen("auth", ({ payload }) => {
+      if (payload.event === "signedIn") setReady(true);
+    });
+
     const params = new URLSearchParams(window.location.search);
     if (!params.has("code")) {
+      // No OAuth callback in progress — check for an existing session or start login.
+      // signInWithRedirect() without a provider goes to Cognito's hosted UI (which
+      // shows the "Sign in with IDC" button). Amplify stores PKCE state so the
+      // code exchange works when Cognito redirects back with ?code=.
       getCurrentUser()
         .then(() => setReady(true))
-        .catch(() => signInWithRedirect({ provider: { custom: "IDC" } }));
+        .catch(() => signInWithRedirect());
     }
+    // If ?code= is present Amplify is already exchanging it; Hub signedIn will fire.
 
-    const unsubscribe = Hub.listen("auth", ({ payload }) => {
-      if (payload.event === "signedIn") {
-        setReady(true);
-      } else if (payload.event === "signInWithRedirect_failure") {
-        // Strip the stale ?code=&state= from the URL so a manual refresh doesn't
-        // re-attempt the dead exchange.
-        window.history.replaceState({}, document.title, window.location.pathname);
-        const error = (payload.data as { error?: Error } | undefined)?.error;
-        const msg = error?.message ?? "Unknown OAuth error";
-        // Log with full detail so the Network-tab 400 response can be correlated.
-        console.error("[auth] signInWithRedirect_failure:", msg, error);
-        setAuthError(msg);
-      }
-    });
     return unsubscribe;
   }, []);
-
-  if (authError) {
-    return (
-      <Box padding="xl" textAlign="center">
-        <Box variant="p" color="text-status-error" margin={{ bottom: "s" }}>
-          Authentication failed: {authError}
-        </Box>
-        <Box variant="p" color="text-body-secondary" margin={{ bottom: "m" }}>
-          Open DevTools → Network and look for the POST to{" "}
-          <code>/oauth2/token</code> to see Cognito&apos;s error response.
-        </Box>
-        <Button
-          variant="primary"
-          onClick={() => {
-            setAuthError(null);
-            signInWithRedirect({ provider: { custom: "IDC" } });
-          }}
-        >
-          Try again
-        </Button>
-      </Box>
-    );
-  }
 
   if (!ready) {
     return (

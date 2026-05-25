@@ -1,5 +1,6 @@
 import { defineBackend } from "@aws-amplify/backend";
 import {
+  CfnManagedLoginBranding,
   CfnUserPoolDomain,
   CfnUserPoolIdentityProvider,
 } from "aws-cdk-lib/aws-cognito";
@@ -131,12 +132,21 @@ backend.addOutput({
 cfnUserPoolClient.callbackUrLs = [outputCallbackUrl, "http://localhost:5173"];
 cfnUserPoolClient.logoutUrLs  = [outputCallbackUrl, "http://localhost:5173"];
 
-new CfnUserPoolDomain(authStack, "CognitoDomain", {
+const cognitoDomain = new CfnUserPoolDomain(authStack, "CognitoDomain", {
   userPoolId: userPool.userPoolId,
   domain: outputDomainPrefix,
   managedLoginVersion: 2,
-
 });
+
+// Apply Cognito's built-in default style to the managed login page.
+// useCognitoProvidedValues: true fills in all unspecified settings with
+// Cognito's defaults, enabling the managed login UI without custom assets.
+const managedLoginBranding = new CfnManagedLoginBranding(authStack, "ManagedLoginBranding", {
+  userPoolId: userPool.userPoolId,
+  clientId: cfnUserPoolClient.ref,
+  useCognitoProvidedValues: true,
+});
+managedLoginBranding.addDependency(cognitoDomain);
 
 // ─── Pre-token generation Lambda — injects IDC groups into cognito:groups ────
 

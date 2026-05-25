@@ -49,7 +49,7 @@ All infrastructure is defined in `amplify/` as CDK code and deployed via Amplify
 
 | Stack | File | Owns |
 |---|---|---|
-| `auth` | `amplify/auth/resource.ts` + `amplify/backend.ts` (SAML section) | Cognito User Pool, Hosted UI domain, SAML identity provider, app client OAuth config, pre-token generation Lambda |
+| `auth` | `amplify/auth/resource.ts` + `amplify/backend.ts` (SAML section) | Cognito User Pool, managed login domain (`managedLoginVersion: 2`), `CfnManagedLoginBranding` (default Cognito style), SAML identity provider, app client OAuth config, pre-token generation Lambda |
 | `data` | `amplify/data/resource.ts` + `amplify/backend.ts` | AppSync schema, Lambda resolvers, IAM grants, AVP policy store, `AppSettingsTable` |
 | `AccessRequestWorkflow` | `amplify/accessRequestWorkflow.ts` | `AccessRequestTable`, Step Functions state machine, workflow Lambdas |
 
@@ -142,13 +142,13 @@ This pattern is implemented in `getMyIDCUserHandler.ts`. Other handlers that nee
 ```
 snitch/
 ├── amplify/
-│   ├── auth/resource.ts              # Cognito — email login + pre-token generation trigger
+│   ├── auth/resource.ts              # Cognito — SAML federation + pre-token generation trigger
 │   ├── authConfig.ts                 # Reads COGNITO_DOMAIN_PREFIX, APP_CALLBACK_URL,
 │   │                                 # IDC_IDENTITY_STORE_ID, ADMIN_GROUP_NAME from
 │   │                                 # Secrets Manager at CDK synth time
 │   ├── data/resource.ts              # AppSync schema: models + custom resolvers
-│   ├── backend.ts                    # CDK wiring: SAML/OAuth escape hatch, AVP policy store,
-│   │                                 # IAM grants, env vars
+│   ├── backend.ts                    # CDK wiring: SAML/OAuth escape hatch, managed login
+│   │                                 # branding, AVP policy store, IAM grants, env vars
 │   ├── accessRequestWorkflow.ts      # Step Functions state machine + AccessRequestTable
 │   └── functions/
 │       ├── auth/                     # Pre-token generation Lambda (injects IDC groups)

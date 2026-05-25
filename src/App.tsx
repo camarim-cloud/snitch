@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useAuthenticator } from "@aws-amplify/ui-react";
+import { signOut as amplifySignOut } from "aws-amplify/auth";
 import { Route, Routes, useNavigate, useLocation } from "react-router";
 
 import AppLayout from "@cloudscape-design/components/app-layout";
@@ -49,8 +50,16 @@ function AppNav() {
   );
 }
 
+function displayName(username: string | undefined): string {
+  if (!username) return "User";
+  // Cognito formats federated SAML usernames as "<provider>_<externalId>".
+  // Strip the "idc_" prefix so users see their email, not the internal format.
+  const idx = username.indexOf("_");
+  return idx !== -1 ? username.slice(idx + 1) : username;
+}
+
 function App() {
-  const { user, signOut } = useAuthenticator();
+  const { user } = useAuthenticator();
   const { pathname } = useLocation();
   const [toolsContent, setToolsContent] = useState<React.ReactNode>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -78,13 +87,13 @@ function App() {
         utilities={[
           {
             type: "button",
-            text: user?.username ?? "User",
+            text: displayName(user?.username),
             iconName: "user-profile",
           },
           {
             type: "button",
             text: "Sign out",
-            onClick: signOut,
+            onClick: () => amplifySignOut(),
           },
         ]}
       />
