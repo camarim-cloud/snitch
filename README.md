@@ -1,6 +1,6 @@
 # Snitch
 
-Snitch is a **Just-in-Time (JIT) privileged access management** tool for AWS. Administrators define policies that grant IAM Identity Center users or groups access to specific AWS accounts with a chosen Permission Set. Users request temporary, time-boxed access through a self-service UI; access is granted automatically and revoked when the duration expires.
+Snitch is a **Just-in-Time (JIT) privileged access management** tool for AWS accounts. Administrators define policies that grant IAM Identity Center users or groups access to specific AWS accounts with a chosen Permission Set. Users request temporary, time-boxed access through a self-service UI; access is granted automatically and revoked when the duration expires.
 
 ## Tech Stack
 
