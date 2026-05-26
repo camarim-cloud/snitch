@@ -1,6 +1,6 @@
 # Snitch
 
-Snitch is a **Just-in-Time (JIT) privileged access management** tool for AWS. Administrators define Cedar policies that authorize IAM Identity Center (IDC) users or groups to assume specific Permission Sets on AWS accounts. End-users then request temporary access through a self-service UI; access is granted automatically and revoked when the requested duration expires.
+Snitch is a **Just-in-Time (JIT) privileged access management** tool for AWS. Administrators define policies that grant IAM Identity Center users or groups access to specific AWS accounts with a chosen Permission Set. Users request temporary, time-boxed access through a self-service UI; access is granted automatically and revoked when the duration expires.
 
 ## Tech Stack
 
@@ -16,183 +16,48 @@ Snitch is a **Just-in-Time (JIT) privileged access management** tool for AWS. Ad
 
 ### 1. Authentication & Authorization
 
-#### Authentication (AuthN)
+Users sign in with their **IAM Identity Center (IDC)** credentials — no separate password needed. IDC is the identity provider; Cognito issues the session tokens. Admin pages (policy management, elevated access, settings) are visible only to users who belong to the designated admin group in IDC. Access decisions (which accounts a user may request) are evaluated against Cedar policies, not hardcoded rules.
 
-Users authenticate via **IAM Identity Center (IDC)** acting as the SAML 2.0 identity provider. Amazon Cognito acts as the service provider and issues tokens consumed by the app and AppSync.
+### 2. Privileged Policies
 
-**Sign-in flow:**
-1. App calls `signInWithRedirect()` → Cognito managed login page loads.
-2. User clicks **"Sign in with IDC"** → Cognito redirects to the IDC SAML endpoint.
-3. User authenticates in IDC → IDC issues a SAML assertion → Cognito validates it.
-4. Cognito runs a **pre-token generation Lambda** that:
-   - Looks up the IDC user by email in IdentityStore.
-   - Fetches the user's IDC group memberships.
-   - Injects group names (and `Admins` if the user belongs to `ADMIN_GROUP_NAME`) into the `cognito:groups` claim.
-5. Cognito issues tokens → the app receives a `Hub signedIn` event and the session is established.
+Admins define who can access what. Each policy maps an IDC user or group to one or more AWS accounts (or entire OUs) and a specific Permission Set. Policies can be created, updated, and deleted from the UI; changes take effect immediately for the next access request.
 
-**Sign-out** calls `amplifySignOut()` → Cognito clears its session cookie → the managed login page is shown again.
+### 3. Just-in-Time Access Requests
 
-All configuration (SAML metadata URL, Identity Store ID, domain prefix, admin group name) is stored in a single AWS Secrets Manager secret at `snitch/auth-config`. CDK reads the secret at synth time; the values are embedded as plain strings in the CloudFormation template.
+Users see only the accounts and permission sets they are actually permitted to request. They pick a destination, choose how long they need access, and submit. Access is granted automatically and revoked as soon as the requested duration expires — no manual cleanup required.
 
-#### Authorization (AuthZ)
+Policies can optionally require approval before access is granted. When approval is required, the request waits for a designated approver to act; if no one responds within 24 hours, the request expires automatically.
 
-Authorization is split between two layers:
+### 4. Approval Workflow
 
-| Layer | Mechanism | What it gates |
-|---|---|---|
-| **Admin pages** | `Admins` Cognito group (injected at token issuance by the pre-token Lambda based on IDC group membership) | Privileged Policies, Approval Policies, Elevated Access, Settings pages — guarded by `AdminGuard` in the UI and `allow.groups(["Admins"])` in the AppSync schema |
-| **Access decisions** | AWS Verified Permissions (Cedar policies, `Snitch` namespace) | Whether an IDC user may `assume` a permission set on an account; whether a Cognito user may `approve` a request for a given account and permission set |
+Admins configure which users or groups can approve requests for each AWS account. Approvers see only the pending requests they are authorized to act on, and can approve or reject each one from a dedicated page. Users cannot approve their own requests.
 
-AppSync forwards the Cognito **access token** (not the ID token) to Lambda resolvers. The access token contains `sub`, `cognito:groups`, and standard OIDC fields — `email` is absent. For IDC-federated users, the Cognito username is formatted as `idc_<email>` (e.g., `idc_alice@example.com`); handlers that need the email strip the `idc_` prefix from `event.identity.username`.
+### 5. Elevated Access (Admin)
 
-### 2. Privileged Policies (Admin)
+Admins can view all active and historical requests across every user, revoke live access early with an optional comment, and inspect the full CloudTrail audit trail for each access window.
 
-Admins manage Cedar policies stored in **AWS Verified Permissions** (AVP) via the Privileged Policies page.
+### 6. AWS Resource Discovery
 
-Each policy grants a principal (IDC user or IDC group) the ability to `assume` one or more Permission Sets on a set of AWS accounts and/or Organizational Units (OUs).
-
-| Operation | API | Details |
-|---|---|---|
-| Create | `createPrivilegedPolicyWithAVP` | Writes Cedar policy to AVP first; if DynamoDB write fails, rolls back the AVP policy |
-| Update | `updatePrivilegedPolicyWithAVP` | Replaces the Cedar statement and updates the DynamoDB record |
-| Delete | `deletePrivilegedPolicyWithAVP` | Removes both the AVP policy and the DynamoDB record |
-| List | `PrivilegedPolicy.list` (AppSync model) | Reads directly from DynamoDB; restricted to Admins |
-
-#### Cedar schema (`Snitch` namespace)
-
-```
-Principal:  Snitch::User  (memberOf Group)
-            Snitch::Group
-Resource:   Snitch::Account  (memberOf OU)
-            Snitch::OU       (memberOf OU)
-Action:     Snitch::Action::"assume"
-Context:    { permissionSetArn: String }
-```
-
-The `buildCedarPolicy` helper ([amplify/functions/verifiedPermissions/cedarPolicyBuilder.ts](amplify/functions/verifiedPermissions/cedarPolicyBuilder.ts)) generates Cedar `permit` statements with `when` conditions that scope access to specific accounts/OUs and permission set ARNs.
-
-### 3. Access Evaluation
-
-The `evaluateMyAccess` GraphQL query lets any authenticated user check what they are allowed to access:
-
-1. Resolves the caller's IDC user ID via `getMyIDCUser` (matches the Cognito email to an IDC identity).
-2. Fetches all IDC group memberships for that user.
-3. Scans every `PrivilegedPolicy` record to build a candidate set of `(accountId, permissionSetArn)` pairs.
-4. Calls AVP `IsAuthorized` in parallel for each candidate, passing group memberships as entity parents so group-scoped policies resolve correctly.
-5. Returns only the pairs where AVP returns `ALLOW`.
-
-The result drives the **Request Access** form: only permitted accounts and permission sets are offered to the user.
-
-### 4. Access Request Workflow
-
-Any authenticated user can request temporary, time-boxed access to an AWS account.
-
-**Flow:**
-
-```
-requestAccess mutation
-  └─ Persist AccessRequest (status: PENDING) in DynamoDB
-  └─ Start Step Functions execution
-        ├─ AssignPermissionSet  →  SSO CreateAccountAssignment  →  update status: ACTIVE
-        ├─ WaitForDuration      →  Step Functions Wait state (durationSeconds)
-        └─ RemovePermissionSet  →  SSO DeleteAccountAssignment  →  update status: EXPIRED
-              (on error at any step → SetStatusFailed → update status: FAILED)
-```
-
-**Retry policy** (all three Lambda task states): exponential back-off starting at 2 s, factor 2, up to 3 retries, full jitter — covers `Lambda.ServiceException`, `Lambda.AWSLambdaException`, `Lambda.SdkClientException`, and `Lambda.TooManyRequestsException`.
-
-**Access request statuses:**
-
-| Status | Meaning |
-|---|---|
-| `PENDING` | No approval required; waiting for Step Functions to assign the permission set |
-| `PENDING_APPROVAL` | Waiting for an approver to act; Step Function paused at `WaitForApproval` |
-| `SCHEDULED` | Approved but waiting for a future start time |
-| `ACTIVE` | Permission set assigned; Step Function paused at `WaitForEarlyRevocation` |
-| `EXPIRED` | Duration elapsed naturally (access revoked) or 24-hour approval timeout fired |
-| `REVOKED` | Admin revoked the request early via the Elevated Access page |
-| `REJECTED` | An approver rejected the request |
-| `FAILED` | An unrecoverable error occurred in the workflow |
-
-The `listMyAccessRequests` query retrieves all requests for the calling user, sorted newest-first via a DynamoDB GSI on `idcUserId`.
-
-### 5. AWS Resource Discovery
-
-A set of Lambda-backed GraphQL queries let admins browse live AWS infrastructure when building policies. All require the `Admins` group except `getMyIDCUser` and `evaluateMyAccess`.
-
-| Query | Data source |
-|---|---|
-| `getMyIDCUser` | IDC IdentityStore (matched by Cognito email) |
-| `listIDCUsers` | IDC IdentityStore |
-| `listIDCGroups` | IDC IdentityStore |
-| `listAWSAccounts` | AWS Organizations |
-| `listOUs` | AWS Organizations |
-| `listPermissionSets` | AWS SSO Admin |
+When building policies, admins can browse live data from the connected AWS organization — IDC users, IDC groups, AWS accounts, Organizational Units, and Permission Sets — without leaving the app.
 
 ---
 
 ## Project Structure
 
 ```
-amplify/
-├── auth/resource.ts                          # Cognito — SAML federation + pre-token generation trigger
-├── authConfig.ts                             # Reads auth config from snitch/auth-config secret at synth time
-├── data/resource.ts                          # AppSync schema + resolvers
-├── backend.ts                                # CDK wiring: SAML/OAuth, managed login branding,
-│                                             # AVP policy store, AppSettingsTable, IAM grants
-├── accessRequestWorkflow.ts                  # Step Functions state machine + AccessRequestTable
-└── functions/
-    ├── auth/                                 # Pre-token generation Lambda
-    │   └── preTokenGenerationHandler.ts      # Injects IDC group memberships into cognito:groups
-    ├── awsResources/                         # IDC, Organizations, SSO Admin resolvers
-    │   ├── getMyIDCUserHandler.ts
-    │   ├── listAWSAccountsHandler.ts
-    │   ├── listIDCGroupsHandler.ts
-    │   ├── listIDCUsersHandler.ts
-    │   ├── listOUsHandler.ts
-    │   ├── listPermissionSetsHandler.ts
-    │   └── helpers.ts
-    ├── verifiedPermissions/                  # Cedar policy CRUD + access evaluation
-    │   ├── cedarPolicyBuilder.ts
-    │   ├── buildApprovalCedarPolicy.ts
-    │   ├── createPrivilegedPolicyHandler.ts
-    │   ├── updatePrivilegedPolicyHandler.ts
-    │   ├── deletePrivilegedPolicyHandler.ts
-    │   ├── createApprovalPolicyHandler.ts
-    │   ├── deleteApprovalPolicyHandler.ts
-    │   └── evaluateAccessHandler.ts
-    ├── settings/                             # App-level settings (CloudTrail log group)
-    │   ├── getSettingsHandler.ts
-    │   └── updateSettingsHandler.ts
-    └── accessRequests/                       # JIT workflow + approval Lambdas
-        ├── requestAccessHandler.ts
-        ├── assignPermissionSetHandler.ts
-        ├── removePermissionSetHandler.ts
-        ├── setStatusFailedHandler.ts
-        ├── listAccessRequestsHandler.ts
-        ├── listAllAccessRequestsHandler.ts
-        ├── storeApprovalTokenHandler.ts
-        ├── storeActiveTokenHandler.ts
-        ├── approveRequestHandler.ts
-        ├── rejectRequestHandler.ts
-        ├── listPendingApprovalsHandler.ts
-        ├── revokeAccessHandler.ts
-        └── getCloudTrailLogsHandler.ts
-src/
-├── pages/
-│   ├── PrivilegedPoliciesPage.tsx            # Admin CRUD for privileged policies
-│   ├── ApprovalPolicyPage.tsx                # Admin: configure per-account approvers
-│   ├── RequestAccessPage.tsx                 # End-user JIT access requests + history
-│   ├── ApproveRequestsPage.tsx               # Any approver: review pending requests
-│   ├── ElevatedAccessPage.tsx                # Admin: view all requests, revoke, CloudTrail
-│   └── SettingsPage.tsx                      # Admin: configure app-level settings
-├── components/
-│   └── AdminGuard.tsx                        # Hides admin routes from non-Admins
-├── utils/
-│   ├── duration.ts                           # formatDuration, todayDateStr, minutesToMaxDuration
-│   └── accessRequestStatus.ts               # accessRequestStatusType — status → Cloudscape indicator
-├── App.tsx
-└── main.tsx                                  # Entry point: Amplify config + signInWithRedirect flow
+amplify/          # Backend infrastructure (CDK) and Lambda functions
+├── auth/         # Authentication config and sign-in trigger
+├── data/         # GraphQL API schema and resolvers
+├── functions/    # Lambda handlers grouped by domain
+│   ├── auth/             # Sign-in customization
+│   ├── awsResources/     # AWS resource discovery (accounts, OUs, IDC users/groups, permission sets)
+│   ├── verifiedPermissions/  # Policy management and access evaluation
+│   ├── settings/         # App-level settings
+│   └── accessRequests/   # Access request lifecycle and approval workflow
+src/              # Frontend (React)
+├── pages/        # One file per route
+├── components/   # Shared UI components
+└── utils/        # Shared helpers
 ```
 
 ---
@@ -215,11 +80,11 @@ npm install
 
 ### Before deploying — IAM Identity Center setup
 
-Authentication is federated through IAM Identity Center via SAML 2.0. Before running `npm run sandbox` you must:
+Snitch uses IAM Identity Center for sign-in. Before running `npm run sandbox` you must:
 
-1. Register a SAML 2.0 application in IAM Identity Center (get the metadata URL).
-2. Note your Identity Store ID (`d-xxxxxxxxxxxx`).
-3. Create an AWS Secrets Manager secret at `snitch/auth-config`:
+1. Register a custom application in IAM Identity Center and note the metadata URL.
+2. Note your Identity Store ID.
+3. Create an AWS Secrets Manager secret at `snitch/auth-config` with the following fields:
 
 ```json
 {
@@ -239,9 +104,9 @@ See the full step-by-step guide in [docs/pages/idc-saml-setup.md](docs/pages/idc
 npx ampx sandbox
 ```
 
-This provisions Cognito (with SAML IdP + managed login), AppSync, DynamoDB, Lambda, Step Functions, and the AVP policy store in an isolated personal environment and writes `amplify_outputs.json`.
+Deploys all backend infrastructure and writes `amplify_outputs.json` with the resource endpoints.
 
-After the first deploy, update the **Application SAML audience** in the IDC console to `urn:amazon:cognito:sp:<USER_POOL_ID>` — until this is done, SAML login will fail with an audience mismatch.
+After the first deploy, update the **Application SAML audience** in the IDC console to match the newly created User Pool ID. See [Step 5 of the setup guide](docs/pages/idc-saml-setup.md#step-5--deploy-and-update-the-audience-uri) for details.
 
 ### Run frontend
 
@@ -265,10 +130,9 @@ npm run test:coverage   # with coverage
 
 | Resource | Service | Purpose |
 |---|---|---|
-| Authentication | Amazon Cognito + IAM Identity Center | SAML 2.0 federation (IDC = IdP, Cognito = SP); managed login page; pre-token Lambda injects IDC group memberships into `cognito:groups`; `Admins` group gates admin routes |
-| API | AWS AppSync | GraphQL API (Cognito user pool auth) |
-| Privileged policy store | AWS Verified Permissions | Cedar policy evaluation |
-| Privileged policy metadata | Amazon DynamoDB (`PrivilegedPolicy` table) | Stores policy metadata alongside AVP IDs |
-| Access request records | Amazon DynamoDB (`AccessRequestTable`) | Tracks JIT request lifecycle |
-| Access workflow | AWS Step Functions | Orchestrates assign → wait → revoke |
-| Resource discovery | AWS Lambda | Queries IDC, Organizations, SSO Admin |
+| Authentication | Amazon Cognito + IAM Identity Center | Sign-in via IDC; admin group membership controls access to admin pages |
+| API | AWS AppSync | GraphQL API consumed by the frontend |
+| Access policy store | AWS Verified Permissions | Evaluates who is allowed to access what |
+| Policy metadata | Amazon DynamoDB | Stores policy records and request history |
+| Access workflow | AWS Step Functions | Assigns and revokes permission sets automatically |
+| Resource discovery | AWS Lambda | Fetches live data from IAM Identity Center, AWS Organizations, and SSO |
