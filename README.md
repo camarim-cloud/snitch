@@ -84,16 +84,21 @@ Snitch uses IAM Identity Center for sign-in. Before running `npm run sandbox` yo
 
 1. Register a custom application in IAM Identity Center and note the metadata URL.
 2. Note your Identity Store ID.
-3. Create an AWS Secrets Manager secret at `snitch/auth-config` with the following fields:
+3. Create an AWS Secrets Manager secret at `snitch/auth-config` containing at least:
 
 ```json
 {
-  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>",
-  "IDC_IDENTITY_STORE_ID": "d-xxxxxxxxxxxx",
-  "ADMIN_GROUP_NAME": "SnitchAdmins",
-  "COGNITO_DOMAIN_PREFIX": "snitch-auth",
-  "APP_CALLBACK_URL": "http://localhost:5173"
+  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
 }
+```
+
+Then export the required synth-time environment variables before running `npm run sandbox`:
+
+```bash
+export COGNITO_DOMAIN_PREFIX="snitch-auth"
+export APP_CALLBACK_URL="http://localhost:5173"
+export IDC_IDENTITY_STORE_ID="d-xxxxxxxxxxxx"
+export ADMIN_GROUP_NAME="SnitchAdmins"
 ```
 
 See the full step-by-step guide in [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md).

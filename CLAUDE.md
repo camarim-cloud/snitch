@@ -44,9 +44,7 @@ npm run sandbox          # Deploy Amplify sandbox
 snitch/
 ├── amplify/
 │   ├── auth/resource.ts        # Cognito config; email login + pre-token generation trigger
-│   ├── authConfig.ts           # Reads COGNITO_DOMAIN_PREFIX, APP_CALLBACK_URL,
-│   │                           # IDC_IDENTITY_STORE_ID, ADMIN_GROUP_NAME from Secrets Manager
-│   │                           # at CDK synth time (execSync). Values become plain strings in CF.
+│   ├── authConfig.ts           # REMOVED — synth-time Cognito values now come from environment variables
 │   ├── data/resource.ts        # AppSync schema: PrivilegedPolicy model + AVP-backed mutations
 │   ├── backend.ts              # CDK wiring: SAML/OAuth CDK escape hatch, AVP policy store,
 │   │                           # AppSettingsTable, IAM grants, env vars

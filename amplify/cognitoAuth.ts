@@ -9,7 +9,19 @@ import {
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
 import { SecretValue, Stack } from "aws-cdk-lib";
-import { outputDomainPrefix, outputCallbackUrl, outputIdentityStoreId, outputAdminGroupName } from "./authConfig";
+
+function requireSynthEnv(name: string, fallback?: string): string {
+  const value = process.env[name] ?? fallback;
+  if (!value) {
+    throw new Error(`Environment variable ${name} is required for synth-time Cognito config.`);
+  }
+  return value;
+}
+
+const outputDomainPrefix = requireSynthEnv("COGNITO_DOMAIN_PREFIX");
+const outputCallbackUrl = requireSynthEnv("APP_CALLBACK_URL");
+const outputIdentityStoreId = requireSynthEnv("IDC_IDENTITY_STORE_ID");
+const outputAdminGroupName = requireSynthEnv("ADMIN_GROUP_NAME");
 
 interface CognitoAuthParams {
   userPool: IUserPool;

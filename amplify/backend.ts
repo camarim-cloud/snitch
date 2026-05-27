@@ -2,7 +2,6 @@ import { defineBackend } from "@aws-amplify/backend";
 import { Table } from "aws-cdk-lib/aws-dynamodb";
 import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
 import { Stack } from "aws-cdk-lib";
-import { outputDomainPrefix, outputCallbackUrl } from "./authConfig";
 import { setupAccessRequestWorkflow } from "./accessRequestWorkflow";
 import { setupCognitoAuth } from "./cognitoAuth";
 import { setupAWSResourceFunctions } from "./awsResourceFunctions";
@@ -48,6 +47,17 @@ import {
 import { getSettingsFunction, updateSettingsFunction } from "./functions/settings/resource";
 import { slackInteractiveFunction } from "./functions/slackInteractions/resource";
 import { preTokenGenerationFunction } from "./functions/auth/resource";
+
+function requireSynthEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Environment variable ${name} is required for synth-time Cognito config.`);
+  }
+  return value;
+}
+
+const outputDomainPrefix = requireSynthEnv("COGNITO_DOMAIN_PREFIX");
+const outputCallbackUrl = requireSynthEnv("APP_CALLBACK_URL");
 
 const backend = defineBackend({
   auth,

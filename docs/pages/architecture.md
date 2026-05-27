@@ -143,9 +143,7 @@ This pattern is implemented in `getMyIDCUserHandler.ts`. Other handlers that nee
 snitch/
 ├── amplify/
 │   ├── auth/resource.ts              # Cognito — SAML federation + pre-token generation trigger
-│   ├── authConfig.ts                 # Reads COGNITO_DOMAIN_PREFIX, APP_CALLBACK_URL,
-│   │                                 # IDC_IDENTITY_STORE_ID, ADMIN_GROUP_NAME from
-│   │                                 # Secrets Manager at CDK synth time
+│   ├── authConfig.ts                 # REMOVED — synth-time Cognito values now come directly from environment variables
 │   ├── data/resource.ts              # AppSync schema: models + custom resolvers
 │   ├── backend.ts                    # CDK wiring: SAML/OAuth escape hatch, managed login
 │   │                                 # branding, AVP policy store, IAM grants, env vars

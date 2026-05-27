@@ -38,9 +38,9 @@ User → clicks "Sign out" in the app
      → App calls signInWithRedirect() → Cognito Managed Login page shown again
 ```
 
-All configuration lives in a single **AWS Secrets Manager** secret (`snitch/auth-config`). CDK reads the secret in two ways:
+CDK reads synth-time values from environment variables only.
 
-- **At synth time** (`amplify/authConfig.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are read via the AWS CLI during `npm run sandbox`. Their resolved values are embedded as plain strings in the CloudFormation template and `amplify_outputs.json`.
+- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are required environment variables and must be defined before running `npm run sandbox`.
 - **At deploy time via CloudFormation dynamic reference**: `IDC_SAML_METADATA_URL` is referenced as `{{resolve:secretsmanager:snitch/auth-config:SecretString:IDC_SAML_METADATA_URL}}` in the SAML identity provider resource property, where CloudFormation supports this expansion.
 
 ### Managed Login Page
@@ -119,16 +119,29 @@ This goes into the secret as `IDC_IDENTITY_STORE_ID`.
 
 Create a secret at path **`snitch/auth-config`** in the same AWS account and region where you will deploy Snitch.
 
-The secret must contain the following JSON fields:
+The secret must contain at least the following JSON field:
 
 ```json
 {
-  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>",
-  "IDC_IDENTITY_STORE_ID": "d-xxxxxxxxxxxx",
-  "ADMIN_GROUP_NAME": "SnitchAdmins",
-  "COGNITO_DOMAIN_PREFIX": "snitch-auth",
-  "APP_CALLBACK_URL": "https://myapp.example.com"
+  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
 }
+```
+
+The synth-time values below must be provided through environment variables before running `npm run sandbox`.
+
+```json
+{
+  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
+}
+```
+
+And set these environment variables in your shell:
+
+```bash
+export COGNITO_DOMAIN_PREFIX="snitch-auth"
+export APP_CALLBACK_URL="http://localhost:5173"
+export IDC_IDENTITY_STORE_ID="d-xxxxxxxxxxxx"
+export ADMIN_GROUP_NAME="SnitchAdmins"
 ```
 
 | Field | Description |
@@ -136,11 +149,11 @@ The secret must contain the following JSON fields:
 | `IDC_SAML_METADATA_URL` | SAML metadata URL copied from the IDC application in Step 2 |
 | `IDC_IDENTITY_STORE_ID` | Identity Store ID copied in Step 3 |
 | `ADMIN_GROUP_NAME` | Display name of the IDC group whose members should receive the Cognito `Admins` group claim |
-| `COGNITO_DOMAIN_PREFIX` | The unique prefix chosen in Step 1 |
-| `APP_CALLBACK_URL` | The production URL of the deployed frontend (e.g., `https://myapp.example.com`). Use `http://localhost:5173` for local sandbox. |
+| `COGNITO_DOMAIN_PREFIX` | The unique prefix chosen in Step 1. Can be supplied as the `COGNITO_DOMAIN_PREFIX` environment variable instead of in the secret. |
+| `APP_CALLBACK_URL` | The production URL of the deployed frontend (e.g. `https://myapp.example.com`). Use `http://localhost:5173` for local sandbox. Can be supplied as the `APP_CALLBACK_URL` environment variable instead of in the secret. |
 
 {: .warning }
-The secret path `snitch/auth-config` is hard-coded in the CDK. The secret **must exist before running `npm run sandbox`**; the CloudFormation deployment will fail without it.
+The secret path `snitch/auth-config` is hard-coded in the CDK. If `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, or `ADMIN_GROUP_NAME` are not supplied via environment variables, they must exist in this secret before running `npm run sandbox`.
 
 ### Creating the secret via AWS CLI
 
