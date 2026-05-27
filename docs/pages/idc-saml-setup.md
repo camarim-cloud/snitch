@@ -40,7 +40,7 @@ User → clicks "Sign out" in the app
 
 CDK reads synth-time values from environment variables only.
 
-- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are required environment variables and must be defined before running `npm run sandbox`.
+- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are required environment variables. Define them directly in Amplify Hosting under Build settings → Environment variables for hosted deployments, or export them in your shell before running `npm run sandbox` for local sandbox work.
 - **At deploy time via CloudFormation dynamic reference**: `IDC_SAML_METADATA_URL` is referenced as `{{resolve:secretsmanager:snitch/auth-config:SecretString:IDC_SAML_METADATA_URL}}` in the SAML identity provider resource property, where CloudFormation supports this expansion.
 
 ### Managed Login Page
@@ -127,7 +127,7 @@ The secret must contain at least the following JSON field:
 }
 ```
 
-The synth-time values below must be provided through environment variables before running `npm run sandbox`.
+The synth-time values below must be defined in Amplify Hosting for hosted deployments, or exported in your shell before running `npm run sandbox` for local sandbox work.
 
 ```json
 {
@@ -135,7 +135,7 @@ The synth-time values below must be provided through environment variables befor
 }
 ```
 
-And set these environment variables in your shell:
+For hosted deployments, define these values directly in Amplify Hosting under **Build settings → Environment variables**. For local sandbox runs, export them in your shell instead:
 
 ```bash
 export COGNITO_DOMAIN_PREFIX="snitch-auth"
@@ -153,7 +153,7 @@ export ADMIN_GROUP_NAME="SnitchAdmins"
 | `APP_CALLBACK_URL` | The production URL of the deployed frontend (e.g. `https://myapp.example.com`). Use `http://localhost:5173` for local sandbox. Can be supplied as the `APP_CALLBACK_URL` environment variable instead of in the secret. |
 
 {: .warning }
-The secret path `snitch/auth-config` is hard-coded in the CDK. If `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, or `ADMIN_GROUP_NAME` are not supplied via environment variables, they must exist in this secret before running `npm run sandbox`.
+The secret path `snitch/auth-config` is hard-coded in the CDK. If `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, or `ADMIN_GROUP_NAME` are not provided by Amplify Hosting or your shell environment, they must exist in this secret before running `npm run sandbox`.
 
 ### Creating the secret via AWS CLI
 

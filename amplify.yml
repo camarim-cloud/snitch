@@ -2,11 +2,7 @@ version: 1
 backend:
   phases:
     preBuild:
-      commands:
-        - export COGNITO_DOMAIN_PREFIX="${COGNITO_DOMAIN_PREFIX:-snitch-auth}"
-        - export APP_CALLBACK_URL="${APP_CALLBACK_URL:-http://localhost:5173}"
-        - export IDC_IDENTITY_STORE_ID="${IDC_IDENTITY_STORE_ID:-d-000000000000}"
-        - export ADMIN_GROUP_NAME="${ADMIN_GROUP_NAME:-SnitchAdmins}"
+      commands: []
     build:
       commands:
         - rm -rf node_modules package-lock.json

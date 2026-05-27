@@ -92,14 +92,14 @@ Snitch uses IAM Identity Center for sign-in. Before running `npm run sandbox` yo
 }
 ```
 
-Then export the required synth-time environment variables before running `npm run sandbox`:
+Define the required synth-time values in Amplify Hosting under Build settings → Environment variables:
 
-```bash
-export COGNITO_DOMAIN_PREFIX="snitch-auth"
-export APP_CALLBACK_URL="http://localhost:5173"
-export IDC_IDENTITY_STORE_ID="d-xxxxxxxxxxxx"
-export ADMIN_GROUP_NAME="SnitchAdmins"
-```
+- `COGNITO_DOMAIN_PREFIX` (for example `snitch-auth`)
+- `APP_CALLBACK_URL` (for example `http://localhost:5173` for local sandbox or your deployed frontend URL)
+- `IDC_IDENTITY_STORE_ID` (your Identity Store ID)
+- `ADMIN_GROUP_NAME` (the IDC admin group display name)
+
+For local sandbox runs, export the same values in your shell before `npx ampx sandbox`.
 
 See the full step-by-step guide in [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md).
 

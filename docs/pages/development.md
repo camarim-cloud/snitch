@@ -175,10 +175,10 @@ Write **why**, not what. Only add a comment when the reason is non-obvious: a hi
 
 | Variable | Used by | Source |
 |---|---|---|
-| `COGNITO_DOMAIN_PREFIX` | `amplify/backend.ts` | Required env var at CDK synth time |
-| `APP_CALLBACK_URL` | `amplify/backend.ts` | Required env var at CDK synth time (defaults to `http://localhost:5173` if unset) |
-| `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` | Required env var at CDK synth time |
-| `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` | Required env var at CDK synth time |
+| `COGNITO_DOMAIN_PREFIX` | `amplify/backend.ts` | Required synth-time env var; define it in Amplify Hosting or export it locally |
+| `APP_CALLBACK_URL` | `amplify/backend.ts` | Required synth-time env var; define it in Amplify Hosting or export it locally (defaults to `http://localhost:5173` if unset) |
+| `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` | Required synth-time env var; define it in Amplify Hosting or export it locally |
+| `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` | Required synth-time env var; define it in Amplify Hosting or export it locally |
 | `AVP_POLICY_STORE_ID` | All AVP-touching handlers | CDK token resolved at deploy time |
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD + evaluateAccess | CDK token resolved at deploy time |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` | CDK token resolved at deploy time |
