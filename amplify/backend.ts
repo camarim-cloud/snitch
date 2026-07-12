@@ -139,7 +139,8 @@ const { policyStoreArn, policyStoreId } = setupPolicyStore({
   evaluateAccessFn: backend.evaluateAccessFunction.resources.lambda,
 });
 
-const { accessRequestTableArn, accessRequestTableName } = setupAccessRequestWorkflow(backend);
+const { accessRequestTableArn, accessRequestTableName, notificationsTopicArn } =
+  setupAccessRequestWorkflow(backend);
 
 const appSettingsTable = setupAppSettings({
   settingsStack: backend.createStack("AppSettingsStack"),
@@ -147,8 +148,17 @@ const appSettingsTable = setupAppSettings({
   updateSettingsFn: backend.updateSettingsFunction.resources.lambda,
   getCloudTrailLogsFn: backend.getCloudTrailLogsFunction.resources.lambda,
   storeApprovalTokenFn: backend.storeApprovalTokenFunction.resources.lambda,
+  requestAccessFn: backend.requestAccessFunction.resources.lambda,
+  removePermissionSetFn: backend.removePermissionSetFunction.resources.lambda,
   accessRequestTableArn,
+  notificationsTopicArn,
 });
+
+// The SNS approval notification links back to the in-app Approve Requests page.
+(backend.storeApprovalTokenFunction.resources.lambda as LambdaFunction).addEnvironment(
+  "APP_CALLBACK_URL",
+  outputCallbackUrl
+);
 
 setupAccessRequestHandlers({
   accessRequestTableArn,

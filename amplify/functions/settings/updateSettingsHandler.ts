@@ -13,6 +13,9 @@ type SettingsArgs = {
   slackBotToken?: string | null;
   slackChannelId?: string | null;
   slackSigningSecret?: string | null;
+  slackNotificationsEnabled?: boolean | null;
+  snsNotificationsEnabled?: boolean | null;
+  snsApprovalNotificationsEnabled?: boolean | null;
 };
 
 type AppSyncEvent = {
@@ -21,14 +24,24 @@ type AppSyncEvent = {
 };
 
 export const handler = async (event: AppSyncEvent): Promise<SettingsArgs> => {
-  const { cloudTrailLogGroupName, slackBotToken, slackChannelId, slackSigningSecret } =
-    event.arguments;
+  const {
+    cloudTrailLogGroupName,
+    slackBotToken,
+    slackChannelId,
+    slackSigningSecret,
+    slackNotificationsEnabled,
+    snsNotificationsEnabled,
+    snsApprovalNotificationsEnabled,
+  } = event.arguments;
 
-  const fields: Array<[string, string | null | undefined]> = [
+  const fields: Array<[string, string | boolean | null | undefined]> = [
     ["cloudTrailLogGroupName", cloudTrailLogGroupName],
     ["slackBotToken", slackBotToken],
     ["slackChannelId", slackChannelId],
     ["slackSigningSecret", slackSigningSecret],
+    ["slackNotificationsEnabled", slackNotificationsEnabled],
+    ["snsNotificationsEnabled", snsNotificationsEnabled],
+    ["snsApprovalNotificationsEnabled", snsApprovalNotificationsEnabled],
   ];
 
   // AppSync forwards null for optional arguments that were not provided by

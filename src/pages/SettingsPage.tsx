@@ -5,6 +5,7 @@ import type { Schema } from "../../amplify/data/resource";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
+import Checkbox from "@cloudscape-design/components/checkbox";
 import Container from "@cloudscape-design/components/container";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import FormField from "@cloudscape-design/components/form-field";
@@ -89,6 +90,30 @@ function SlackHelpPanel() {
   );
 }
 
+function NotificationsHelpPanel() {
+  return (
+    <HelpPanel header={<h2>Access-Request Notifications</h2>}>
+      <p>
+        Send a notification whenever a user requests access and when a granted access finishes
+        (expires naturally or is revoked by an admin). Choose one or both delivery channels below.
+      </p>
+      <h3>Slack</h3>
+      <p>
+        Posts an informational message to the Slack channel configured in the{" "}
+        <strong>Slack Integration</strong> section above. Requires the Bot Token and Channel ID to be
+        set there. This is separate from the approval message (with Approve/Reject buttons), which is
+        always sent for requests that require approval.
+      </p>
+      <h3>SNS</h3>
+      <p>
+        Publishes to the app-managed Amazon SNS topic shown below. To receive messages, subscribe
+        email or SMS endpoints to that topic in the AWS console (SNS → Topics → Create subscription)
+        and confirm the subscription.
+      </p>
+    </HelpPanel>
+  );
+}
+
 export function SettingsPage() {
   const { openHelpPanel } = useHelpPanel();
 
@@ -96,6 +121,10 @@ export function SettingsPage() {
   const [slackBotToken, setSlackBotToken] = useState("");
   const [slackChannelId, setSlackChannelId] = useState("");
   const [slackSigningSecret, setSlackSigningSecret] = useState("");
+  const [slackNotificationsEnabled, setSlackNotificationsEnabled] = useState(false);
+  const [snsNotificationsEnabled, setSnsNotificationsEnabled] = useState(false);
+  const [snsApprovalNotificationsEnabled, setSnsApprovalNotificationsEnabled] = useState(false);
+  const [snsTopicArn, setSnsTopicArn] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -107,6 +136,10 @@ export function SettingsPage() {
   const [slackSaveStatus, setSlackSaveStatus] = useState<SaveStatus>("idle");
   const [slackSaveError, setSlackSaveError] = useState("");
   const [slackSaving, setSlackSaving] = useState(false);
+
+  const [notificationsSaveStatus, setNotificationsSaveStatus] = useState<SaveStatus>("idle");
+  const [notificationsSaveError, setNotificationsSaveError] = useState("");
+  const [notificationsSaving, setNotificationsSaving] = useState(false);
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -120,6 +153,10 @@ export function SettingsPage() {
       setSlackBotToken(res.data?.slackBotToken ?? "");
       setSlackChannelId(res.data?.slackChannelId ?? "");
       setSlackSigningSecret(res.data?.slackSigningSecret ?? "");
+      setSlackNotificationsEnabled(res.data?.slackNotificationsEnabled ?? false);
+      setSnsNotificationsEnabled(res.data?.snsNotificationsEnabled ?? false);
+      setSnsApprovalNotificationsEnabled(res.data?.snsApprovalNotificationsEnabled ?? false);
+      setSnsTopicArn(res.data?.snsTopicArn ?? "");
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -170,6 +207,30 @@ export function SettingsPage() {
       setSlackSaveStatus("error");
     } finally {
       setSlackSaving(false);
+    }
+  }
+
+  async function handleSaveNotifications() {
+    setNotificationsSaving(true);
+    setNotificationsSaveStatus("idle");
+    setNotificationsSaveError("");
+    try {
+      const res = await client.mutations.updateAppSettings({
+        slackNotificationsEnabled,
+        snsNotificationsEnabled,
+        snsApprovalNotificationsEnabled,
+      });
+      if (res.errors?.length) {
+        throw new Error(res.errors.map((e) => e.message).join("; "));
+      }
+      setNotificationsSaveStatus("success");
+    } catch (err) {
+      setNotificationsSaveError(
+        err instanceof Error ? err.message : "Failed to save notification settings"
+      );
+      setNotificationsSaveStatus("error");
+    } finally {
+      setNotificationsSaving(false);
     }
   }
 
@@ -308,6 +369,102 @@ export function SettingsPage() {
                 variant="primary"
                 onClick={handleSaveSlack}
                 loading={slackSaving}
+                disabled={loading}
+              >
+                Save
+              </Button>
+            </Box>
+          </SpaceBetween>
+        </Container>
+
+        <Container
+          header={
+            <Header
+              variant="h2"
+              info={
+                <Link variant="info" onFollow={() => openHelpPanel(<NotificationsHelpPanel />)}>
+                  Info
+                </Link>
+              }
+              description="Notify when a user requests access and when a granted access finishes (expires or is revoked)."
+            >
+              Access-Request Notifications
+            </Header>
+          }
+        >
+          <SpaceBetween size="m">
+            {notificationsSaveStatus === "success" && (
+              <Alert type="success" dismissible onDismiss={() => setNotificationsSaveStatus("idle")}>
+                Notification settings saved successfully.
+              </Alert>
+            )}
+            {notificationsSaveStatus === "error" && (
+              <Alert type="error" dismissible onDismiss={() => setNotificationsSaveStatus("idle")}>
+                {notificationsSaveError}
+              </Alert>
+            )}
+
+            <FormField
+              label="Slack"
+              description="Requires the Bot Token and Channel ID configured in Slack Integration above."
+            >
+              <Checkbox
+                checked={slackNotificationsEnabled}
+                disabled={loading}
+                onChange={({ detail }) => {
+                  setSlackNotificationsEnabled(detail.checked);
+                  setNotificationsSaveStatus("idle");
+                }}
+              >
+                Send access-request notifications to Slack
+              </Checkbox>
+            </FormField>
+
+            <FormField
+              label="Amazon SNS"
+              description="Publishes to the app-managed SNS topic. Subscribe endpoints to the topic below to receive messages."
+            >
+              <SpaceBetween size="xs">
+                <Checkbox
+                  checked={snsNotificationsEnabled}
+                  disabled={loading}
+                  onChange={({ detail }) => {
+                    setSnsNotificationsEnabled(detail.checked);
+                    setNotificationsSaveStatus("idle");
+                  }}
+                >
+                  Send access-request notifications (requested / finished) to Amazon SNS
+                </Checkbox>
+                <Checkbox
+                  checked={snsApprovalNotificationsEnabled}
+                  disabled={loading}
+                  onChange={({ detail }) => {
+                    setSnsApprovalNotificationsEnabled(detail.checked);
+                    setNotificationsSaveStatus("idle");
+                  }}
+                >
+                  Send approval requests to Amazon SNS (links to the Approve Requests page)
+                </Checkbox>
+              </SpaceBetween>
+            </FormField>
+
+            <FormField
+              label="SNS Topic ARN"
+              description="Read-only. Subscribe email/SMS endpoints to this topic in the AWS console to receive notifications."
+            >
+              <Input
+                value={snsTopicArn}
+                readOnly
+                disabled={loading}
+                placeholder={loading ? "Loading…" : "Deploy the backend to create the topic"}
+              />
+            </FormField>
+
+            <Box float="right">
+              <Button
+                variant="primary"
+                onClick={handleSaveNotifications}
+                loading={notificationsSaving}
                 disabled={loading}
               >
                 Save

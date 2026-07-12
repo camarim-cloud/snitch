@@ -362,6 +362,12 @@ const schema = a.schema({
     slackBotToken: a.string(),
     slackChannelId: a.string(),
     slackSigningSecret: a.string(),
+    slackNotificationsEnabled: a.boolean(),
+    snsNotificationsEnabled: a.boolean(),
+    snsApprovalNotificationsEnabled: a.boolean(),
+    // Read-only: the CDK-managed SNS topic ARN, surfaced so admins can subscribe
+    // endpoints. Sourced from the NOTIFICATIONS_TOPIC_ARN env var, not DynamoDB.
+    snsTopicArn: a.string(),
   }),
 
   getAppSettings: a
@@ -377,6 +383,9 @@ const schema = a.schema({
       slackBotToken: a.string(),
       slackChannelId: a.string(),
       slackSigningSecret: a.string(),
+      slackNotificationsEnabled: a.boolean(),
+      snsNotificationsEnabled: a.boolean(),
+      snsApprovalNotificationsEnabled: a.boolean(),
     })
     .returns(a.ref("AppSettings"))
     .handler(a.handler.function(updateSettingsFunction))

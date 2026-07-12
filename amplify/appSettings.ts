@@ -9,7 +9,10 @@ interface AppSettingsParams {
   updateSettingsFn: IFunction;
   getCloudTrailLogsFn: IFunction;
   storeApprovalTokenFn: IFunction;
+  requestAccessFn: IFunction;
+  removePermissionSetFn: IFunction;
   accessRequestTableArn: string;
+  notificationsTopicArn: string;
 }
 
 export function setupAppSettings({
@@ -18,7 +21,10 @@ export function setupAppSettings({
   updateSettingsFn,
   getCloudTrailLogsFn,
   storeApprovalTokenFn,
+  requestAccessFn,
+  removePermissionSetFn,
   accessRequestTableArn,
+  notificationsTopicArn,
 }: AppSettingsParams): Table {
   const appSettingsTable = new Table(settingsStack, "AppSettingsTable", {
     partitionKey: { name: "settingKey", type: AttributeType.STRING },
@@ -67,6 +73,27 @@ export function setupAppSettings({
   (storeApprovalTokenFn as LambdaFunction).addEnvironment(
     "APP_SETTINGS_TABLE_NAME",
     appSettingsTable.tableName
+  );
+
+  // requestAccess + removePermissionSet read the notification toggles/Slack config
+  // from the settings table before dispatching access-event notifications. (SNS
+  // publish + NOTIFICATIONS_TOPIC_ARN are granted in setupAccessRequestWorkflow.)
+  for (const fn of [requestAccessFn, removePermissionSetFn]) {
+    fn.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ["dynamodb:GetItem"],
+        resources: [appSettingsTable.tableArn],
+      })
+    );
+    (fn as LambdaFunction).addEnvironment("APP_SETTINGS_TABLE_NAME", appSettingsTable.tableName);
+  }
+
+  // getAppSettings surfaces the CDK-managed topic ARN read-only so admins can
+  // subscribe endpoints; it reads it from the environment, not DynamoDB.
+  (getSettingsFn as LambdaFunction).addEnvironment(
+    "NOTIFICATIONS_TOPIC_ARN",
+    notificationsTopicArn
   );
 
   return appSettingsTable;

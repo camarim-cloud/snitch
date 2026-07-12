@@ -19,5 +19,10 @@ export const handler = async (_event: AppSyncEvent) => {
     slackBotToken: result.Item?.slackBotToken ?? null,
     slackChannelId: result.Item?.slackChannelId ?? null,
     slackSigningSecret: result.Item?.slackSigningSecret ?? null,
+    slackNotificationsEnabled: result.Item?.slackNotificationsEnabled ?? false,
+    snsNotificationsEnabled: result.Item?.snsNotificationsEnabled ?? false,
+    snsApprovalNotificationsEnabled: result.Item?.snsApprovalNotificationsEnabled ?? false,
+    // Read-only: the CDK-managed topic ARN comes from the environment, not DynamoDB.
+    snsTopicArn: process.env.NOTIFICATIONS_TOPIC_ARN ?? null,
   };
 };

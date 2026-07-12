@@ -1,13 +1,40 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { SFNClient, StartExecutionCommand } from "@aws-sdk/client-sfn";
+import { notifyAccessEvent } from "../notifications/notify";
 
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const TABLE_NAME = process.env.ACCESS_REQUEST_TABLE_NAME!;
+const SETTINGS_TABLE_NAME = process.env.APP_SETTINGS_TABLE_NAME!;
 const STATE_MACHINE_ARN = process.env.ACCESS_REQUEST_STATE_MACHINE_ARN!;
+const NOTIFICATIONS_TOPIC_ARN = process.env.NOTIFICATIONS_TOPIC_ARN;
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const sfn = new SFNClient({ region: REGION });
+
+/**
+ * Best-effort notification that a new access request was created. Reads the
+ * per-channel toggles from AppSettings and dispatches to Slack/SNS. Never throws
+ * — a notification failure must not fail the request mutation.
+ */
+async function notifyRequested(request: AccessRequest): Promise<void> {
+  try {
+    const settingsResult = await dynamo.send(
+      new GetCommand({ TableName: SETTINGS_TABLE_NAME, Key: { settingKey: "global" } })
+    );
+    await notifyAccessEvent({
+      kind: "REQUESTED",
+      request,
+      settings: settingsResult.Item ?? {},
+      topicArn: NOTIFICATIONS_TOPIC_ARN,
+    });
+  } catch (err) {
+    console.error(
+      "Access-request notification failed",
+      JSON.stringify(err, Object.getOwnPropertyNames(err))
+    );
+  }
+}
 
 type RequestAccessInput = {
   idcUserId: string;
@@ -128,6 +155,8 @@ export const handler = async (event: AppSyncEvent): Promise<AccessRequest> => {
   };
 
   await dynamo.send(new PutCommand({ TableName: TABLE_NAME, Item: updatedItem }));
+
+  await notifyRequested(updatedItem);
 
   return updatedItem;
 };

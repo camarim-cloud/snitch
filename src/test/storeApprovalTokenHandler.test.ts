@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDynamoSend, mockFetch } = vi.hoisted(() => ({
+const { mockDynamoSend, mockFetch, mockSnsSend } = vi.hoisted(() => ({
   mockDynamoSend: vi.fn(),
   mockFetch: vi.fn(),
+  mockSnsSend: vi.fn(),
 }));
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({
@@ -21,9 +22,21 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
   },
 }));
 
+// notifyPendingApproval (in notify.ts) publishes via this client.
+vi.mock("@aws-sdk/client-sns", () => ({
+  SNSClient: class {
+    send = mockSnsSend;
+  },
+  PublishCommand: class {
+    constructor(public input: { TopicArn: string; Subject: string; Message: string }) {}
+  },
+}));
+
 // Set before import so module-level constants capture the correct values.
 process.env.ACCESS_REQUEST_TABLE_NAME = "AccessRequestTable";
 process.env.APP_SETTINGS_TABLE_NAME = "AppSettingsTable";
+process.env.NOTIFICATIONS_TOPIC_ARN = "arn:aws:sns:us-east-1:123:AccessNotifications";
+process.env.APP_CALLBACK_URL = "https://snitch.example.com/";
 
 const { handler } = await import(
   "../../amplify/functions/accessRequests/storeApprovalTokenHandler"
@@ -64,6 +77,7 @@ describe("storeApprovalTokenHandler", () => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", mockFetch);
     mockFetch.mockResolvedValue(successFetch());
+    mockSnsSend.mockResolvedValue({});
   });
 
   // ─── Core DynamoDB write ───────────────────────────────────────────────────
@@ -293,5 +307,48 @@ describe("storeApprovalTokenHandler", () => {
       .mockRejectedValue(new Error("GetItem throttled"));  // both GetCommands fail
 
     await expect(handler(BASE_INPUT)).resolves.toBeUndefined();
+  });
+
+  // ─── SNS approval notification (link-to-app) ──────────────────────────────
+
+  it("publishes an SNS approval notification with the app link when the toggle is on", async () => {
+    mockDynamoSend
+      .mockResolvedValueOnce({})                                        // UpdateCommand
+      .mockResolvedValueOnce({ Item: REQUEST_ITEM })                    // request
+      .mockResolvedValueOnce({ Item: { snsApprovalNotificationsEnabled: true } }); // settings
+
+    await handler(BASE_INPUT);
+
+    expect(mockSnsSend).toHaveBeenCalledOnce();
+    const msg = mockSnsSend.mock.calls[0][0].input;
+    expect(msg.Subject).toBe("AWS access approval required - Production Account (111111111111)");
+    expect(msg.Message).toContain("Alice Smith");
+    expect(msg.Message).toContain("https://snitch.example.com/#/approve-requests");
+  });
+
+  it("does not publish to SNS when the approval toggle is off", async () => {
+    mockDynamoSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: REQUEST_ITEM })
+      .mockResolvedValueOnce({ Item: SLACK_SETTINGS }); // no approval toggle
+
+    await handler(BASE_INPUT);
+
+    expect(mockSnsSend).not.toHaveBeenCalled();
+  });
+
+  it("still posts to Slack even when the SNS publish fails", async () => {
+    mockDynamoSend
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ Item: REQUEST_ITEM })
+      .mockResolvedValueOnce({
+        Item: { ...SLACK_SETTINGS, snsApprovalNotificationsEnabled: true },
+      });
+    mockSnsSend.mockRejectedValue(new Error("sns down"));
+
+    await handler(BASE_INPUT);
+
+    // SNS failure is swallowed and does not block the Slack notification.
+    expect(mockFetch).toHaveBeenCalledOnce();
   });
 });

@@ -91,6 +91,30 @@ describe("updateSettingsHandler", () => {
     expect(mockDynamoSend).not.toHaveBeenCalled();
   });
 
+  it("writes all notification toggles, including an explicit false", async () => {
+    const result = await handler({
+      arguments: {
+        slackNotificationsEnabled: true,
+        snsNotificationsEnabled: false,
+        snsApprovalNotificationsEnabled: true,
+      },
+      identity: {},
+    });
+
+    const cmd = mockDynamoSend.mock.calls[0][0];
+    const exprNames = Object.values(cmd.input.ExpressionAttributeNames as Record<string, string>);
+    expect(exprNames).toContain("slackNotificationsEnabled");
+    // false is a real value the admin chose — it must be persisted, not skipped.
+    expect(exprNames).toContain("snsNotificationsEnabled");
+    expect(exprNames).toContain("snsApprovalNotificationsEnabled");
+    expect(Object.values(cmd.input.ExpressionAttributeValues as Record<string, unknown>)).toContain(false);
+    expect(result).toEqual({
+      slackNotificationsEnabled: true,
+      snsNotificationsEnabled: false,
+      snsApprovalNotificationsEnabled: true,
+    });
+  });
+
   it("treats null arguments as not-provided (AppSync forwards null for omitted optional args)", async () => {
     // Simulates saving only cloudTrailLogGroupName while AppSync sends null for the rest
     await handler({

@@ -1,9 +1,16 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  formatDurationMinutes,
+  notifyPendingApproval,
+  type NotifiableRequest,
+} from "../notifications/notify";
 
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const TABLE_NAME = process.env.ACCESS_REQUEST_TABLE_NAME!;
 const SETTINGS_TABLE_NAME = process.env.APP_SETTINGS_TABLE_NAME!;
+const NOTIFICATIONS_TOPIC_ARN = process.env.NOTIFICATIONS_TOPIC_ARN;
+const APP_CALLBACK_URL = process.env.APP_CALLBACK_URL;
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 
@@ -16,17 +23,6 @@ type StoreTokenInput = {
   taskToken: string;
   startTime?: string | null;
 };
-
-function formatDurationMinutes(minutes: number): string {
-  const days = Math.floor(minutes / (60 * 24));
-  const hours = Math.floor((minutes % (60 * 24)) / 60);
-  const mins = minutes % 60;
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (mins > 0) parts.push(`${mins}min`);
-  return parts.join(" ") || "0min";
-}
 
 async function sendSlackNotification(
   requestId: string,
@@ -127,8 +123,20 @@ export const handler = async (input: StoreTokenInput): Promise<void> => {
     ]);
 
     const request = requestResult.Item;
-    const slackBotToken = settingsResult.Item?.slackBotToken as string | undefined;
-    const slackChannelId = settingsResult.Item?.slackChannelId as string | undefined;
+    const settings = settingsResult.Item ?? {};
+    const slackBotToken = settings.slackBotToken as string | undefined;
+    const slackChannelId = settings.slackChannelId as string | undefined;
+
+    // SNS approval notification (link-to-app). Sent first and internally
+    // best-effort so a Slack failure below can't skip it. Independent toggle.
+    if (request) {
+      await notifyPendingApproval({
+        request: request as NotifiableRequest,
+        settings,
+        topicArn: NOTIFICATIONS_TOPIC_ARN,
+        appUrl: APP_CALLBACK_URL,
+      });
+    }
 
     if (request && slackBotToken && slackChannelId) {
       await sendSlackNotification(input.requestId, request, slackBotToken, slackChannelId);

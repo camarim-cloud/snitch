@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDynamoSend, mockSfnSend } = vi.hoisted(() => ({
+const { mockDynamoSend, mockSfnSend, mockNotifyAccessEvent } = vi.hoisted(() => ({
   mockDynamoSend: vi.fn(),
   mockSfnSend: vi.fn(),
+  mockNotifyAccessEvent: vi.fn(),
 }));
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({
@@ -14,6 +15,11 @@ vi.mock("@aws-sdk/lib-dynamodb", () => ({
     from: vi.fn(() => ({ send: mockDynamoSend })),
   },
   PutCommand: class {
+    readonly cmd = "Put";
+    constructor(public input: unknown) {}
+  },
+  GetCommand: class {
+    readonly cmd = "Get";
     constructor(public input: unknown) {}
   },
 }));
@@ -27,9 +33,17 @@ vi.mock("@aws-sdk/client-sfn", () => ({
   },
 }));
 
+vi.mock("../../amplify/functions/notifications/notify", () => ({
+  notifyAccessEvent: mockNotifyAccessEvent,
+}));
+
 const { handler } = await import(
   "../../amplify/functions/accessRequests/requestAccessHandler"
 );
+
+function putCommands() {
+  return mockDynamoSend.mock.calls.map((c) => c[0]).filter((c: { cmd: string }) => c.cmd === "Put");
+}
 
 const BASE_ARGS = {
   idcUserId: "idc-user-1",
@@ -53,6 +67,7 @@ describe("requestAccessHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.ACCESS_REQUEST_TABLE_NAME = "AccessRequestTable";
+    process.env.APP_SETTINGS_TABLE_NAME = "AppSettingsTable";
     process.env.ACCESS_REQUEST_STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:sm";
     mockDynamoSend.mockResolvedValue({});
     mockSfnSend.mockResolvedValue({ executionArn: "arn:aws:states:us-east-1:123:execution:sm:exec-1" });
@@ -140,7 +155,7 @@ describe("requestAccessHandler", () => {
     it("issues two DynamoDB PutCommands — before and after SFN", async () => {
       await handler(BASE_EVENT);
 
-      expect(mockDynamoSend).toHaveBeenCalledTimes(2);
+      expect(putCommands()).toHaveLength(2);
     });
 
     it("second PutCommand includes the executionArn", async () => {
@@ -161,6 +176,27 @@ describe("requestAccessHandler", () => {
         "arn:aws:states:us-east-1:123:execution:sm:exec-1"
       );
       expect(result.requesterCognitoSub).toBe("user-sub-111");
+      expect(result.status).toBe("PENDING");
+    });
+  });
+
+  describe("notification", () => {
+    it("sends a REQUESTED notification with the persisted record after both writes", async () => {
+      await handler(BASE_EVENT);
+
+      expect(mockNotifyAccessEvent).toHaveBeenCalledOnce();
+      const arg = mockNotifyAccessEvent.mock.calls[0][0];
+      expect(arg.kind).toBe("REQUESTED");
+      expect(arg.request.accountName).toBe("Production Account");
+      expect(arg.request.stepFunctionExecutionArn).toBe(
+        "arn:aws:states:us-east-1:123:execution:sm:exec-1"
+      );
+    });
+
+    it("still returns the record when notification dispatch throws", async () => {
+      mockNotifyAccessEvent.mockRejectedValue(new Error("notify boom"));
+
+      const result = await handler(BASE_EVENT);
       expect(result.status).toBe("PENDING");
     });
   });

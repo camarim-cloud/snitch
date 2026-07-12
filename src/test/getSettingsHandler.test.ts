@@ -26,13 +26,16 @@ const { handler } = await import(
 
 const APPSYNC_EVENT = { arguments: {}, identity: {} };
 
+const TOPIC_ARN = "arn:aws:sns:us-east-1:123:AccessNotifications";
+
 describe("getSettingsHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.APP_SETTINGS_TABLE_NAME = "AppSettingsTable";
+    process.env.NOTIFICATIONS_TOPIC_ARN = TOPIC_ARN;
   });
 
-  it("returns null for all fields when no settings record exists", async () => {
+  it("returns defaults for all fields when no settings record exists", async () => {
     mockDynamoSend.mockResolvedValue({ Item: undefined });
     const result = await handler(APPSYNC_EVENT);
     expect(result).toEqual({
@@ -40,6 +43,10 @@ describe("getSettingsHandler", () => {
       slackBotToken: null,
       slackChannelId: null,
       slackSigningSecret: null,
+      slackNotificationsEnabled: false,
+      snsNotificationsEnabled: false,
+      snsApprovalNotificationsEnabled: false,
+      snsTopicArn: TOPIC_ARN,
     });
   });
 
@@ -51,6 +58,9 @@ describe("getSettingsHandler", () => {
         slackBotToken: "xoxb-token",
         slackChannelId: "C12345",
         slackSigningSecret: "secret",
+        slackNotificationsEnabled: true,
+        snsNotificationsEnabled: true,
+        snsApprovalNotificationsEnabled: true,
       },
     });
     const result = await handler(APPSYNC_EVENT);
@@ -59,10 +69,15 @@ describe("getSettingsHandler", () => {
       slackBotToken: "xoxb-token",
       slackChannelId: "C12345",
       slackSigningSecret: "secret",
+      slackNotificationsEnabled: true,
+      snsNotificationsEnabled: true,
+      snsApprovalNotificationsEnabled: true,
+      snsTopicArn: TOPIC_ARN,
     });
   });
 
-  it("returns null for unset Slack fields when only cloudTrailLogGroupName is stored", async () => {
+  it("defaults notification toggles to false and returns null topic ARN when env is unset", async () => {
+    delete process.env.NOTIFICATIONS_TOPIC_ARN;
     mockDynamoSend.mockResolvedValue({
       Item: { settingKey: "global", cloudTrailLogGroupName: "/aws/cloudtrail/my-trail" },
     });
@@ -72,6 +87,10 @@ describe("getSettingsHandler", () => {
       slackBotToken: null,
       slackChannelId: null,
       slackSigningSecret: null,
+      slackNotificationsEnabled: false,
+      snsNotificationsEnabled: false,
+      snsApprovalNotificationsEnabled: false,
+      snsTopicArn: null,
     });
   });
 

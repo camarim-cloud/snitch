@@ -3,6 +3,7 @@ import { Effect, PolicyDocument, PolicyStatement, Role, ServicePrincipal } from 
 import { Function as LambdaFunction, IFunction } from "aws-cdk-lib/aws-lambda";
 import { AttributeType, BillingMode, Table } from "aws-cdk-lib/aws-dynamodb";
 import { CfnStateMachine } from "aws-cdk-lib/aws-stepfunctions";
+import { Topic } from "aws-cdk-lib/aws-sns";
 
 interface AccessRequestResources {
   assignPermissionSetFunction: { resources: { lambda: IFunction } };
@@ -17,6 +18,7 @@ interface AccessRequestResources {
 export type AccessRequestWorkflowOutputs = {
   accessRequestTableArn: string;
   accessRequestTableName: string;
+  notificationsTopicArn: string;
 };
 
 // approveRequest, rejectRequest, listPendingApprovals are intentionally NOT
@@ -45,6 +47,11 @@ export function setupAccessRequestWorkflow(
     indexName: "byIdcUserId",
     partitionKey: { name: "idcUserId", type: AttributeType.STRING }
   });
+
+  // App-managed SNS topic for access-event notifications. Admins subscribe
+  // email/SMS endpoints to it manually; requestAccess and removePermissionSet
+  // publish to it when the SNS toggle is enabled in Settings.
+  const notificationsTopic = new Topic(workflowStack, "AccessNotificationsTopic");
 
   // ─── IAM policies ──────────────────────────────────────────────────────────
 
@@ -364,6 +371,20 @@ export function setupAccessRequestWorkflow(
     fn.addEnvironment("ACCESS_REQUEST_TABLE_NAME", accessRequestTable.tableName);
   }
 
+  // These lambdas emit access-event notifications to SNS: requestAccess (REQUESTED),
+  // removePermissionSet (FINISHED), and storeApprovalToken (approval-required).
+  // Grant publish + expose the ARN. Settings-table read access + APP_SETTINGS_TABLE_NAME
+  // are wired separately in setupAppSettings.
+  const snsPublishPolicy = new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["sns:Publish"],
+    resources: [notificationsTopic.topicArn],
+  });
+  for (const fn of [requestLambda, removeLambda, storeTokenLambda]) {
+    fn.addToRolePolicy(snsPublishPolicy);
+    fn.addEnvironment("NOTIFICATIONS_TOPIC_ARN", notificationsTopic.topicArn);
+  }
+
   setFailedLambda.addToRolePolicy(accessRequestDdbPolicy);
   setFailedLambda.addEnvironment("ACCESS_REQUEST_TABLE_NAME", accessRequestTable.tableName);
 
@@ -402,5 +423,6 @@ export function setupAccessRequestWorkflow(
   return {
     accessRequestTableArn: accessRequestTable.tableArn,
     accessRequestTableName: accessRequestTable.tableName,
+    notificationsTopicArn: notificationsTopic.topicArn,
   };
 }
