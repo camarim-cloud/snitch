@@ -7,6 +7,7 @@ import {
 import {
   getIDCInstancePublic,
   listGroupMembershipsForUser,
+  expandOUsToAccounts,
 } from "../awsResources/helpers";
 
 const REGION = process.env.AWS_REGION ?? "us-east-2";
@@ -60,6 +61,12 @@ export const handler = async (event: AppSyncEvent): Promise<PermittedAccess[]> =
   const scanResult = await dynamo.send(new ScanCommand({ TableName: TABLE_NAME }));
   const policies = scanResult.Items ?? [];
 
+  // OU-based policies grant access to every account inside the OU subtree. Expand
+  // the OUs referenced by any policy to their member accounts, and keep each
+  // account's OU ancestry so the AVP `resource in Snitch::OU` check resolves.
+  const referencedOuIds = policies.flatMap((p) => (p.ouIds as string[] | undefined) ?? []);
+  const { ouToAccounts, accountToAncestorOUs } = await expandOUsToAccounts(referencedOuIds);
+
   type Candidate = {
     accountId: string;
     permissionSetArn: string;
@@ -70,46 +77,72 @@ export const handler = async (event: AppSyncEvent): Promise<PermittedAccess[]> =
   const seen = new Map<string, Candidate>();
   const candidates: Candidate[] = [];
 
+  const upsertCandidate = (
+    accountId: string,
+    arn: string,
+    name: string,
+    policyMax: number | null,
+    policyRequiresApproval: boolean
+  ) => {
+    const key = `${accountId}::${arn}`;
+    const existing = seen.get(key);
+    if (!existing) {
+      const candidate: Candidate = {
+        accountId,
+        permissionSetArn: arn,
+        permissionSetName: name,
+        maxDurationMinutes: policyMax,
+        requiresApproval: policyRequiresApproval,
+      };
+      seen.set(key, candidate);
+      candidates.push(candidate);
+      return;
+    }
+    // Use the most restrictive (minimum) max duration across policies
+    if (policyMax !== null) {
+      existing.maxDurationMinutes =
+        existing.maxDurationMinutes === null
+          ? policyMax
+          : Math.min(existing.maxDurationMinutes, policyMax);
+    }
+    // If any policy requires approval for this pair, the pair requires approval
+    if (policyRequiresApproval) existing.requiresApproval = true;
+  };
+
   for (const policy of policies) {
-    const accountIds: string[] = policy.accountIds ?? [];
     const permissionSetArns: string[] = policy.permissionSetArns ?? [];
     const permissionSetNames: string[] = policy.permissionSetNames ?? [];
     const policyMax: number | null = policy.maxDurationMinutes ?? null;
     const policyRequiresApproval: boolean = policy.requiresApproval ?? false;
 
-    for (const accountId of accountIds) {
+    // A policy targets its explicit accounts plus every account inside its OUs.
+    const targetAccountIds = new Set<string>(policy.accountIds ?? []);
+    for (const ouId of (policy.ouIds as string[] | undefined) ?? []) {
+      for (const accountId of ouToAccounts.get(ouId) ?? []) targetAccountIds.add(accountId);
+    }
+
+    for (const accountId of targetAccountIds) {
       for (let i = 0; i < permissionSetArns.length; i++) {
         const arn = permissionSetArns[i];
-        const key = `${accountId}::${arn}`;
-        const existing = seen.get(key);
-        if (!existing) {
-          const candidate: Candidate = {
-            accountId,
-            permissionSetArn: arn,
-            permissionSetName: permissionSetNames[i] ?? arn,
-            maxDurationMinutes: policyMax,
-            requiresApproval: policyRequiresApproval,
-          };
-          seen.set(key, candidate);
-          candidates.push(candidate);
-        } else {
-          // Use the most restrictive (minimum) max duration across policies
-          if (policyMax !== null) {
-            existing.maxDurationMinutes =
-              existing.maxDurationMinutes === null
-                ? policyMax
-                : Math.min(existing.maxDurationMinutes, policyMax);
-          }
-          // If any policy requires approval for this pair, the pair requires approval
-          if (policyRequiresApproval) existing.requiresApproval = true;
-        }
+        upsertCandidate(accountId, arn, permissionSetNames[i] ?? arn, policyMax, policyRequiresApproval);
       }
     }
   }
 
-  // Evaluate each candidate in parallel against AVP
+  // Evaluate each candidate in parallel against AVP. The resource account carries
+  // its OU ancestry as parents so `principal in Snitch::OU` policies resolve.
   const results = await Promise.all(
     candidates.map(async (candidate) => {
+      const ancestorOUs = accountToAncestorOUs.get(candidate.accountId) ?? new Set<string>();
+      const accountEntity = {
+        identifier: { entityType: "Snitch::Account", entityId: candidate.accountId },
+        attributes: {},
+        parents: [...ancestorOUs].map((ouId) => ({
+          entityType: "Snitch::OU",
+          entityId: ouId,
+        })),
+      };
+
       const response = await avp.send(
         new IsAuthorizedCommand({
           policyStoreId: POLICY_STORE_ID,
@@ -122,7 +155,7 @@ export const handler = async (event: AppSyncEvent): Promise<PermittedAccess[]> =
             },
           },
           entities: {
-            entityList: [userEntity],
+            entityList: [userEntity, accountEntity],
           },
         })
       );

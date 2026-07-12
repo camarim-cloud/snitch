@@ -13,6 +13,7 @@ import {
 import {
   OrganizationsClient,
   ListAccountsCommand,
+  ListAccountsForParentCommand,
   ListRootsCommand,
   ListOrganizationalUnitsForParentCommand,
 } from "@aws-sdk/client-organizations";
@@ -200,6 +201,76 @@ export async function listGroupMembershipsForUser(
  * Example: const { identityStoreId } = await getIDCInstancePublic()
  */
 export { getIDCInstance as getIDCInstancePublic };
+
+async function listAccountIdsForParent(parentId: string): Promise<string[]> {
+  const ids: string[] = [];
+  let nextToken: string | undefined;
+  do {
+    const result = await organizations.send(
+      new ListAccountsForParentCommand({ ParentId: parentId, NextToken: nextToken })
+    );
+    for (const account of result.Accounts ?? []) if (account.Id) ids.push(account.Id);
+    nextToken = result.NextToken;
+  } while (nextToken);
+  return ids;
+}
+
+async function listChildOUIds(parentId: string): Promise<string[]> {
+  const ids: string[] = [];
+  let nextToken: string | undefined;
+  do {
+    const result = await organizations.send(
+      new ListOrganizationalUnitsForParentCommand({ ParentId: parentId, NextToken: nextToken })
+    );
+    for (const ou of result.OrganizationalUnits ?? []) if (ou.Id) ids.push(ou.Id);
+    nextToken = result.NextToken;
+  } while (nextToken);
+  return ids;
+}
+
+export type OUExpansion = {
+  // Referenced (and intermediate) OU id → every account id transitively inside it
+  ouToAccounts: Map<string, Set<string>>;
+  // Account id → the OU ids it descends from (flattened ancestry within referenced subtrees)
+  accountToAncestorOUs: Map<string, Set<string>>;
+};
+
+/**
+ * Expands each referenced OU to the AWS accounts within it (recursively descending
+ * into nested OUs) and records each account's OU ancestry. Privileged policies can
+ * grant access by OU, so evaluateMyAccess needs both: the account list to build
+ * candidates, and the ancestry to inject as AVP entity parents so a Cedar
+ * `resource in Snitch::OU::"…"` clause resolves for the concrete account.
+ *
+ * Ancestry is flattened (each account lists every ancestor OU as a direct parent),
+ * which is sufficient for AVP transitive-membership checks without declaring
+ * intermediate OU→OU links.
+ *
+ * Example: expandOUsToAccounts(["ou-root-abc"]) →
+ *   { ouToAccounts: {"ou-root-abc" → {"111…","222…"}}, accountToAncestorOUs: {"111…" → {"ou-root-abc"}} }
+ */
+export async function expandOUsToAccounts(referencedOuIds: string[]): Promise<OUExpansion> {
+  const ouToAccounts = new Map<string, Set<string>>();
+  const accountToAncestorOUs = new Map<string, Set<string>>();
+
+  const addTo = (map: Map<string, Set<string>>, key: string, values: string[]) => {
+    const set = map.get(key) ?? new Set<string>();
+    for (const v of values) set.add(v);
+    map.set(key, set);
+  };
+
+  async function walk(ouId: string, ancestry: string[]): Promise<void> {
+    const chain = [...ancestry, ouId];
+    for (const accountId of await listAccountIdsForParent(ouId)) {
+      for (const ancestorOu of chain) addTo(ouToAccounts, ancestorOu, [accountId]);
+      addTo(accountToAncestorOUs, accountId, chain);
+    }
+    for (const childOuId of await listChildOUIds(ouId)) await walk(childOuId, chain);
+  }
+
+  for (const ouId of new Set(referencedOuIds)) await walk(ouId, []);
+  return { ouToAccounts, accountToAncestorOUs };
+}
 
 export async function listPermissionSets() {
   const { instanceArn } = await getIDCInstance();

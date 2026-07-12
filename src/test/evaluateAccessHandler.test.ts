@@ -1,12 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockDynamoSend, mockAvpSend, mockGetIDCInstance, mockListGroupMemberships } =
-  vi.hoisted(() => ({
-    mockDynamoSend: vi.fn(),
-    mockAvpSend: vi.fn(),
-    mockGetIDCInstance: vi.fn(),
-    mockListGroupMemberships: vi.fn(),
-  }));
+const {
+  mockDynamoSend,
+  mockAvpSend,
+  mockGetIDCInstance,
+  mockListGroupMemberships,
+  mockExpandOUsToAccounts,
+} = vi.hoisted(() => ({
+  mockDynamoSend: vi.fn(),
+  mockAvpSend: vi.fn(),
+  mockGetIDCInstance: vi.fn(),
+  mockListGroupMemberships: vi.fn(),
+  mockExpandOUsToAccounts: vi.fn(),
+}));
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({
   // Plain class so `new DynamoDBClient()` works in the handler
@@ -34,6 +40,7 @@ vi.mock("@aws-sdk/client-verifiedpermissions", () => ({
 vi.mock("../../amplify/functions/awsResources/helpers", () => ({
   getIDCInstancePublic: mockGetIDCInstance,
   listGroupMembershipsForUser: mockListGroupMemberships,
+  expandOUsToAccounts: mockExpandOUsToAccounts,
 }));
 
 const { handler } = await import(
@@ -58,6 +65,11 @@ describe("evaluateAccessHandler", () => {
 
     mockGetIDCInstance.mockResolvedValue({ identityStoreId: "d-1234567890" });
     mockListGroupMemberships.mockResolvedValue([]);
+    // Default: no OU expansion (account-based policies only)
+    mockExpandOUsToAccounts.mockResolvedValue({
+      ouToAccounts: new Map(),
+      accountToAncestorOUs: new Map(),
+    });
   });
 
   it("returns empty array when no policies exist in the table", async () => {
@@ -230,5 +242,97 @@ describe("evaluateAccessHandler", () => {
     mockAvpSend.mockRejectedValue(new Error("AVP unavailable"));
 
     await expect(handler(makeEvent(IDC_USER_ID))).rejects.toThrow("AVP unavailable");
+  });
+
+  describe("OU-based policies", () => {
+    const OU_ID = "ou-k3jy-l9m1oni3";
+
+    it("evaluates accounts inside an OU-only policy (empty accountIds)", async () => {
+      mockDynamoSend.mockResolvedValue({
+        Items: [
+          {
+            accountIds: [],
+            ouIds: [OU_ID],
+            permissionSetArns: [PS_ARN_1],
+            permissionSetNames: ["ReadOnly"],
+          },
+        ],
+      });
+      // The OU contains two accounts.
+      mockExpandOUsToAccounts.mockResolvedValue({
+        ouToAccounts: new Map([[OU_ID, new Set([ACCOUNT_1, ACCOUNT_2])]]),
+        accountToAncestorOUs: new Map([
+          [ACCOUNT_1, new Set([OU_ID])],
+          [ACCOUNT_2, new Set([OU_ID])],
+        ]),
+      });
+      mockAvpSend.mockResolvedValue({ decision: "ALLOW" });
+
+      const result = await handler(makeEvent(IDC_USER_ID));
+
+      // Before this fix, an OU-only policy produced zero candidates → no access.
+      expect(mockExpandOUsToAccounts).toHaveBeenCalledWith([OU_ID]);
+      expect(result).toHaveLength(2);
+      expect(result.map((r) => r.accountId).sort()).toEqual([ACCOUNT_1, ACCOUNT_2]);
+    });
+
+    it("injects the account's OU ancestry as AVP entity parents", async () => {
+      mockDynamoSend.mockResolvedValue({
+        Items: [
+          {
+            accountIds: [],
+            ouIds: [OU_ID],
+            permissionSetArns: [PS_ARN_1],
+            permissionSetNames: ["ReadOnly"],
+          },
+        ],
+      });
+      mockExpandOUsToAccounts.mockResolvedValue({
+        ouToAccounts: new Map([[OU_ID, new Set([ACCOUNT_1])]]),
+        accountToAncestorOUs: new Map([[ACCOUNT_1, new Set([OU_ID])]]),
+      });
+      mockAvpSend.mockResolvedValue({ decision: "ALLOW" });
+
+      await handler(makeEvent(IDC_USER_ID));
+
+      const entityList = mockAvpSend.mock.calls[0][0].input.entities.entityList;
+      const accountEntity = entityList.find(
+        (e: { identifier: { entityType: string } }) =>
+          e.identifier.entityType === "Snitch::Account"
+      );
+      expect(accountEntity.identifier.entityId).toBe(ACCOUNT_1);
+      expect(accountEntity.parents).toContainEqual({
+        entityType: "Snitch::OU",
+        entityId: OU_ID,
+      });
+    });
+
+    it("deduplicates an account covered by both an explicit accountId and an OU", async () => {
+      mockDynamoSend.mockResolvedValue({
+        Items: [
+          {
+            accountIds: [ACCOUNT_1],
+            ouIds: [OU_ID],
+            permissionSetArns: [PS_ARN_1],
+            permissionSetNames: ["ReadOnly"],
+          },
+        ],
+      });
+      // The OU also contains ACCOUNT_1 (plus ACCOUNT_2).
+      mockExpandOUsToAccounts.mockResolvedValue({
+        ouToAccounts: new Map([[OU_ID, new Set([ACCOUNT_1, ACCOUNT_2])]]),
+        accountToAncestorOUs: new Map([
+          [ACCOUNT_1, new Set([OU_ID])],
+          [ACCOUNT_2, new Set([OU_ID])],
+        ]),
+      });
+      mockAvpSend.mockResolvedValue({ decision: "ALLOW" });
+
+      const result = await handler(makeEvent(IDC_USER_ID));
+
+      // ACCOUNT_1 + PS_ARN_1 must be evaluated once, not twice.
+      expect(mockAvpSend).toHaveBeenCalledTimes(2);
+      expect(result).toHaveLength(2);
+    });
   });
 });

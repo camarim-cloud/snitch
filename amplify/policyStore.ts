@@ -150,6 +150,9 @@ export function setupPolicyStore({
         "sso:ListInstances",
         "identitystore:ListUsers",
         "identitystore:ListGroupMembershipsForMember",
+        // Expand OU-based policies to their member accounts (evaluateMyAccess)
+        "organizations:ListAccountsForParent",
+        "organizations:ListOrganizationalUnitsForParent",
       ],
       resources: ["*"],
     })
