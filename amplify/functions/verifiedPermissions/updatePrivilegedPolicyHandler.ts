@@ -37,6 +37,46 @@ type UpdateInput = {
 
 type AppSyncEvent = { arguments: UpdateInput };
 
+function sameStringSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setB = new Set(b);
+  return a.every((v) => setB.has(v));
+}
+
+type PolicyIdentity = {
+  principalType: "USER" | "GROUP";
+  principalId: string;
+  accountIds: string[];
+  ouIds: string[];
+};
+
+/**
+ * Rejects any edit that changes a policy's principal or resource (accounts/OUs).
+ * These define the policy's identity and its AVP static-policy scope, which
+ * UpdatePolicy cannot modify — the only way to change them is delete + recreate.
+ *
+ * Example: editing a policy's name or permission sets is allowed; switching its
+ * principal from GROUP "TeamLeads" to USER "alice" throws.
+ */
+function assertPrincipalAndResourceUnchanged(
+  snapshot: Record<string, unknown>,
+  next: PolicyIdentity
+): void {
+  const changed: string[] = [];
+  if (snapshot.principalType !== next.principalType) changed.push("principal type");
+  if (snapshot.principalId !== next.principalId) changed.push("principal");
+  if (!sameStringSet((snapshot.accountIds as string[]) ?? [], next.accountIds))
+    changed.push("accounts");
+  if (!sameStringSet((snapshot.ouIds as string[]) ?? [], next.ouIds)) changed.push("OUs");
+
+  if (changed.length > 0) {
+    throw new Error(
+      `Cannot change ${changed.join(", ")} on an existing policy. ` +
+        `Delete this policy and create a new one instead.`
+    );
+  }
+}
+
 export const handler = async (event: AppSyncEvent) => {
   const args = event.arguments;
 
@@ -52,10 +92,22 @@ export const handler = async (event: AppSyncEvent) => {
   const permissionSetArns = args.permissionSetArns ?? [];
   const updatedAt = new Date().toISOString();
 
+  // A policy's identity is (principal + resource). AVP forbids changing the
+  // principal or resource scope of a static policy via UpdatePolicy, so these
+  // fields are immutable once created — to change them, delete and recreate the
+  // policy. The edit form locks them; this guard rejects any direct-API bypass.
+  assertPrincipalAndResourceUnchanged(snapshot, {
+    principalType: args.principalType,
+    principalId: args.principalId,
+    accountIds,
+    ouIds,
+  });
+
   await assertNoDuplicatePrincipalResource(dynamo, TABLE_NAME, {
     principalId: args.principalId,
     accountIds,
     ouIds,
+    permissionSetArns,
     excludeId: args.id,
   });
 
@@ -109,6 +161,8 @@ export const handler = async (event: AppSyncEvent) => {
 
   try {
     if (avpPolicyId) {
+      // Principal and resource scope are unchanged (enforced above), so an
+      // in-place UpdatePolicy is always valid here.
       await avp.send(
         new UpdatePolicyCommand({
           policyStoreId: POLICY_STORE_ID,

@@ -44,6 +44,7 @@ export const handler = async (event: AppSyncEvent) => {
     principalId: args.principalId,
     accountIds,
     ouIds,
+    permissionSetArns,
   });
 
   // Step 1: Create Cedar policy in AVP first so rollback is a simple delete

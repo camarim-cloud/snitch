@@ -33,6 +33,11 @@ const PRINCIPAL_TYPE_OPTIONS: Option[] = [
   { label: "Group", value: "GROUP" },
 ];
 
+// The principal and resource define a policy's identity and its immutable AVP
+// static-policy scope. They can't be edited in place — delete and recreate instead.
+const IDENTITY_LOCKED_HINT =
+  "Locked after creation. To change the principal or resource, delete this policy and create a new one.";
+
 type DurationUnit = "minutes" | "hours" | "days";
 
 const MAX_DURATION_UNIT_OPTIONS: Option[] = [
@@ -326,6 +331,7 @@ export function PrivilegedPoliciesPage() {
       const principalId = formValues.principal?.value ?? "";
       const newAccountIds = formValues.accounts.map((o) => o.value ?? "").filter(Boolean);
       const newOuIds = formValues.ous.map((o) => o.value ?? "").filter(Boolean);
+      const newPermissionSetArns = formValues.permissionSets.map((o) => o.value ?? "").filter(Boolean);
       const currentId = modalMode === "edit" ? selectedItems[0]?.id : undefined;
 
       const conflict = policies.find((p) => {
@@ -333,13 +339,17 @@ export function PrivilegedPoliciesPage() {
         if (currentId && p.id === currentId) return false;
         const accountOverlap = newAccountIds.some((id) => (p.accountIds ?? []).includes(id));
         const ouOverlap = newOuIds.some((id) => (p.ouIds ?? []).includes(id));
-        return accountOverlap || ouOverlap;
+        const permissionSetOverlap = newPermissionSetArns.some((arn) =>
+          (p.permissionSetArns ?? []).includes(arn)
+        );
+        // Conflict only occurs if there's overlap in BOTH resources AND permission sets
+        return (accountOverlap || ouOverlap) && permissionSetOverlap;
       });
 
       if (conflict) {
         setFormError(
-          `"${conflict.name}" already grants this principal access to one or more of the selected accounts/OUs. ` +
-            `Edit that policy to add the new permission set instead.`
+          `"${conflict.name}" already grants this principal access to one or more of the selected accounts/OUs ` +
+            `with one or more of the selected permission sets. Edit that policy instead.`
         );
         valid = false;
       }
@@ -400,6 +410,8 @@ export function PrivilegedPoliciesPage() {
       setDeleting(false);
     }
   }
+
+  const isEditMode = modalMode === "edit";
 
   const principalOptions =
     formValues.principalType.value === "GROUP"
@@ -582,9 +594,13 @@ export function PrivilegedPoliciesPage() {
                   />
                 </FormField>
 
-                <FormField label="Principal type">
+                <FormField
+                  label="Principal type"
+                  description={isEditMode ? IDENTITY_LOCKED_HINT : undefined}
+                >
                   <Select
                     selectedOption={formValues.principalType}
+                    disabled={isEditMode}
                     onChange={({ detail }) =>
                       setFormValues((prev) => ({
                         ...prev,
@@ -599,6 +615,7 @@ export function PrivilegedPoliciesPage() {
                 <FormField label="User or Group" errorText={principalError}>
                   <Select
                     selectedOption={formValues.principal}
+                    disabled={isEditMode}
                     onChange={({ detail }) =>
                       setFormValues((prev) => ({
                         ...prev,
@@ -614,10 +631,15 @@ export function PrivilegedPoliciesPage() {
 
                 <FormField
                   label="Accounts"
-                  description="Users will have access to all selected accounts."
+                  description={
+                    isEditMode
+                      ? IDENTITY_LOCKED_HINT
+                      : "Users will have access to all selected accounts."
+                  }
                 >
                   <Multiselect
                     selectedOptions={formValues.accounts}
+                    disabled={isEditMode}
                     onChange={({ detail }) =>
                       setFormValues((prev) => ({
                         ...prev,
@@ -633,10 +655,15 @@ export function PrivilegedPoliciesPage() {
 
                 <FormField
                   label="Organization Units (OUs)"
-                  description="Users will have access to all accounts within the selected OUs."
+                  description={
+                    isEditMode
+                      ? IDENTITY_LOCKED_HINT
+                      : "Users will have access to all accounts within the selected OUs."
+                  }
                 >
                   <Multiselect
                     selectedOptions={formValues.ous}
+                    disabled={isEditMode}
                     onChange={({ detail }) =>
                       setFormValues((prev) => ({
                         ...prev,

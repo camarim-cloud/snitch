@@ -64,6 +64,7 @@ const ACCOUNTS = [
 ];
 const PERMISSION_SETS = [
   { arn: "arn:aws:sso:::permissionSet/ps-admin", name: "AdminAccess", description: "" },
+  { arn: "arn:aws:sso:::permissionSet/ps-read", name: "ReadOnly", description: "" },
 ];
 
 const EXISTING_POLICY = {
@@ -74,8 +75,8 @@ const EXISTING_POLICY = {
   principalDisplayName: "Alice",
   accountIds: ["111111111111"],
   ouIds: [],
-  permissionSetArns: ["arn:aws:sso:::permissionSet/ps-read"],
-  permissionSetNames: ["ReadOnly"],
+  permissionSetArns: ["arn:aws:sso:::permissionSet/ps-admin"],
+  permissionSetNames: ["AdminAccess"],
   maxDurationMinutes: 60,
   avpPolicyId: "avp-1",
   description: null,
@@ -216,6 +217,37 @@ describe("PrivilegedPoliciesPage", () => {
       // Select a permission set
       await userEvent.click(within(dialog).getByText("Select permission sets"));
       await userEvent.click(await screen.findByRole("option", { name: /AdminAccess/i }));
+
+      await userEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+      expect(
+        within(dialog).queryByText(/already grants this principal/i)
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not show a conflict error when the same principal and account use a different permission set", async () => {
+      mockListPolicies.mockResolvedValue({ data: [EXISTING_POLICY] });
+      render(<PrivilegedPoliciesPage />);
+
+      await waitFor(() => screen.getByText("Dev Access"));
+      const dialog = await openCreateModal();
+
+      // Name is required
+      await userEvent.type(within(dialog).getByPlaceholderText(/enter policy name/i), "New Policy");
+
+      // Same user (Alice — principalId: user-1)
+      await userEvent.click(within(dialog).getByText("Select a user"));
+      await userEvent.click(await screen.findByRole("option", { name: /alice/i }));
+
+      // Same account (111111111111)
+      await userEvent.click(within(dialog).getByText("Select accounts"));
+      await userEvent.click(
+        await screen.findByRole("option", { name: /Dev Account.*111111111111/i })
+      );
+
+      // Different permission set (ReadOnly instead of AdminAccess)
+      await userEvent.click(within(dialog).getByText("Select permission sets"));
+      await userEvent.click(await screen.findByRole("option", { name: /ReadOnly/i }));
 
       await userEvent.click(within(dialog).getByRole("button", { name: /^create$/i }));
 

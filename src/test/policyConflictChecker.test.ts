@@ -31,6 +31,7 @@ const POLICY_A = {
   principalId: "user-1",
   accountIds: ["111111111111"],
   ouIds: [],
+  permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
 };
 
 describe("assertNoDuplicatePrincipalResource", () => {
@@ -41,6 +42,17 @@ describe("assertNoDuplicatePrincipalResource", () => {
       principalId: "user-1",
       accountIds: [],
       ouIds: [],
+      permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
+    });
+    expect(mockDynamoSend).not.toHaveBeenCalled();
+  });
+
+  it("skips the DynamoDB scan when permissionSetArns is empty", async () => {
+    await assertNoDuplicatePrincipalResource(dynamo, TABLE, {
+      principalId: "user-1",
+      accountIds: ["111111111111"],
+      ouIds: [],
+      permissionSetArns: [],
     });
     expect(mockDynamoSend).not.toHaveBeenCalled();
   });
@@ -52,6 +64,7 @@ describe("assertNoDuplicatePrincipalResource", () => {
         principalId: "user-1",
         accountIds: ["111111111111"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
       })
     ).resolves.toBeUndefined();
   });
@@ -65,6 +78,21 @@ describe("assertNoDuplicatePrincipalResource", () => {
         principalId: "user-1",
         accountIds: ["111111111111"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("resolves when same account but different permission set", async () => {
+    mockDynamoSend.mockResolvedValue({
+      Items: [POLICY_A], // has ps-1
+    });
+    await expect(
+      assertNoDuplicatePrincipalResource(dynamo, TABLE, {
+        principalId: "user-1",
+        accountIds: ["111111111111"],
+        ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-2"], // different permission set
       })
     ).resolves.toBeUndefined();
   });
@@ -77,47 +105,69 @@ describe("assertNoDuplicatePrincipalResource", () => {
         principalId: "user-1",
         accountIds: ["111111111111"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
       })
     ).resolves.toBeUndefined();
   });
 
-  it("throws when same principalId and overlapping accountId", async () => {
+  it("throws when same principalId, accountId, and permissionSetArn all match", async () => {
     mockDynamoSend.mockResolvedValue({ Items: [POLICY_A] });
     await expect(
       assertNoDuplicatePrincipalResource(dynamo, TABLE, {
         principalId: "user-1",
         accountIds: ["111111111111"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
       })
     ).rejects.toThrow(
-      `Policy "Prod Access" already grants this principal access to: 111111111111`
+      `Policy "Prod Access" already grants this principal access to 111111111111 with permission sets: arn:aws:sso:::permissionSet/ps-1`
     );
   });
 
-  it("throws when same principalId and overlapping ouId", async () => {
+  it("throws when same principalId, ouId, and permissionSetArn all match", async () => {
     mockDynamoSend.mockResolvedValue({
-      Items: [{ ...POLICY_A, accountIds: [], ouIds: ["ou-root-abc"] }],
+      Items: [
+        {
+          id: "policy-a",
+          name: "Prod Access",
+          principalId: "user-1",
+          accountIds: [],
+          ouIds: ["ou-root-abc"],
+          permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
+        },
+      ],
     });
     await expect(
       assertNoDuplicatePrincipalResource(dynamo, TABLE, {
         principalId: "user-1",
         accountIds: [],
         ouIds: ["ou-root-abc"],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
       })
     ).rejects.toThrow(
-      `Policy "Prod Access" already grants this principal access to: ou-root-abc`
+      `Policy "Prod Access" already grants this principal access to ou-root-abc with permission sets: arn:aws:sso:::permissionSet/ps-1`
     );
   });
 
-  it("throws and lists all conflicting resources in the error message", async () => {
+  it("throws and lists all conflicting resources and permission sets in the error message", async () => {
     mockDynamoSend.mockResolvedValue({
-      Items: [{ ...POLICY_A, accountIds: ["111111111111", "999999999999"], ouIds: [] }],
+      Items: [
+        {
+          id: "policy-a",
+          name: "Multi Access",
+          principalId: "user-1",
+          accountIds: ["111111111111", "999999999999"],
+          ouIds: [],
+          permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1", "arn:aws:sso:::permissionSet/ps-2"],
+        },
+      ],
     });
     await expect(
       assertNoDuplicatePrincipalResource(dynamo, TABLE, {
         principalId: "user-1",
         accountIds: ["111111111111", "999999999999"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1", "arn:aws:sso:::permissionSet/ps-2"],
       })
     ).rejects.toThrow("111111111111, 999999999999");
   });
@@ -129,6 +179,7 @@ describe("assertNoDuplicatePrincipalResource", () => {
         principalId: "user-1",
         accountIds: ["111111111111"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
         excludeId: "policy-a",
       })
     ).resolves.toBeUndefined();
@@ -138,7 +189,14 @@ describe("assertNoDuplicatePrincipalResource", () => {
     mockDynamoSend.mockResolvedValue({
       Items: [
         POLICY_A,
-        { id: "policy-b", name: "Conflicting Access", principalId: "user-1", accountIds: ["111111111111"], ouIds: [] },
+        {
+          id: "policy-b",
+          name: "Conflicting Access",
+          principalId: "user-1",
+          accountIds: ["111111111111"],
+          ouIds: [],
+          permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
+        },
       ],
     });
     await expect(
@@ -146,6 +204,7 @@ describe("assertNoDuplicatePrincipalResource", () => {
         principalId: "user-1",
         accountIds: ["111111111111"],
         ouIds: [],
+        permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
         excludeId: "policy-a",
       })
     ).rejects.toThrow(`Policy "Conflicting Access"`);
@@ -157,6 +216,7 @@ describe("assertNoDuplicatePrincipalResource", () => {
       principalId: "user-1",
       accountIds: ["111111111111"],
       ouIds: [],
+      permissionSetArns: ["arn:aws:sso:::permissionSet/ps-1"],
     });
     const callInput = mockDynamoSend.mock.calls[0][0].input as {
       FilterExpression: string;
