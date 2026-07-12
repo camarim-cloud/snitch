@@ -187,5 +187,34 @@ Write **why**, not what. Only add a comment when the reason is non-obvious: a hi
 
 All are set in `amplify/backend.ts` via `addEnvironment(...)` on each function resource.
 
+### Deploying the Sandbox — `scripts/set-sandbox-env.sh`
+
+The four **synth-time** variables (`COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_NAME`) must be present in the shell that runs `npm run sandbox`. If any is missing, synthesis fails with:
+
+```
+[AssemblyError] Environment variable COGNITO_DOMAIN_PREFIX is required for synth-time Cognito config.
+```
+
+`scripts/set-sandbox-env.sh` sets all four. Edit the values at the top of the file to match your AWS environment (at minimum, set the real `IDC_IDENTITY_STORE_ID`), then **source** it and deploy:
+
+```bash
+source scripts/set-sandbox-env.sh   # exports the four vars into your current shell
+npm run sandbox                     # synthesizes and deploys with them in scope
+```
+
+{: .warning }
+**Source it — do not execute it.** Running `./scripts/set-sandbox-env.sh` (or `bash scripts/set-sandbox-env.sh`) runs the script in a subshell, so its `export`s vanish the moment it exits and `npm run sandbox` sees none of them. Only `source scripts/set-sandbox-env.sh` (equivalently `. scripts/set-sandbox-env.sh`) sets the variables in the shell you then deploy from.
+
+Each line uses `export VAR="${VAR:-default}"`, so a value you already exported in your shell takes precedence over the in-file default — useful for overriding a single variable without editing the file:
+
+```bash
+export IDC_IDENTITY_STORE_ID=d-1234567890
+source scripts/set-sandbox-env.sh
+```
+
+The script validates that all four variables are non-empty (aborting otherwise) and warns if `IDC_IDENTITY_STORE_ID` is still the placeholder. The SAML metadata URL is **not** set here — it is read from AWS Secrets Manager (`snitch/auth-config`, JSON field `IDC_SAML_METADATA_URL`) at synth time.
+
+In Amplify Hosting, set these four variables in the app's environment-variable configuration instead of sourcing the script.
+
 {: .note }
 `IDC_IDENTITY_STORE_ID` and `ADMIN_GROUP_NAME` are plain string values embedded at CDK synthesis time — they are **not** CloudFormation dynamic references (`{{resolve:secretsmanager:...}}`). This is intentional: Lambda environment variables in Amplify Gen 2's nested stacks cannot resolve dynamic references because CDK generates environment-agnostic stacks with pseudo-parameter ARNs that CloudFormation cannot expand inside `{{resolve:...}}` strings.

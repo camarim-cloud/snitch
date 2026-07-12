@@ -99,13 +99,18 @@ Define the required synth-time values in Amplify Hosting under Build settings â†
 - `IDC_IDENTITY_STORE_ID` (your Identity Store ID)
 - `ADMIN_GROUP_NAME` (the IDC admin group display name)
 
-For local sandbox runs, export the same values in your shell before `npx ampx sandbox`.
+For local sandbox runs, set the same values in your shell before `npx ampx sandbox`. The convenience script `scripts/set-sandbox-env.sh` does this â€” edit its values, then **source** it (do not execute it, or the exports won't persist):
+
+```bash
+source scripts/set-sandbox-env.sh
+```
 
 See the full step-by-step guide in [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md).
 
 ### Deploy backend sandbox
 
 ```bash
+source scripts/set-sandbox-env.sh   # sets the four required synth-time env vars
 npx ampx sandbox
 ```
 
