@@ -10,6 +10,7 @@ import {
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const IDENTITY_STORE_ID = process.env.IDC_IDENTITY_STORE_ID!;
 const ADMIN_GROUP_NAME = process.env.ADMIN_GROUP_NAME!;
+const AUDITOR_GROUP_NAME = process.env.AUDITOR_GROUP_NAME!;
 
 const identitystore = new IdentitystoreClient({ region: REGION });
 
@@ -60,13 +61,17 @@ export const handler: PreTokenGenerationV2TriggerHandler = async (event) => {
     })
   );
 
-  // "Admins" is added when the user belongs to the configured IDC admin group so that
-  // Cognito's allow.group("Admins") authorization rules continue to work unchanged.
-  const cognitoGroups = groupNames.includes(ADMIN_GROUP_NAME)
-    ? [...groupNames, "Admins"]
-    : groupNames;
+  // The literal "Admins"/"Auditors" claims are appended when the user belongs to the
+  // configured IDC group for each role, so Cognito's allow.group("Admins") /
+  // allow.groups(["Admins","Auditors"]) authorization rules resolve unchanged. A user
+  // in both IDC groups correctly receives both claims.
+  const cognitoGroups = [...groupNames];
+  if (groupNames.includes(ADMIN_GROUP_NAME)) cognitoGroups.push("Admins");
+  if (groupNames.includes(AUDITOR_GROUP_NAME)) cognitoGroups.push("Auditors");
 
-  console.log(JSON.stringify({ msg: "groups-resolved", ADMIN_GROUP_NAME, groupNames, cognitoGroups }));
+  console.log(
+    JSON.stringify({ msg: "groups-resolved", ADMIN_GROUP_NAME, AUDITOR_GROUP_NAME, groupNames, cognitoGroups })
+  );
 
   event.response = {
     claimsAndScopeOverrideDetails: {

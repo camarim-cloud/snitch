@@ -103,6 +103,7 @@ Define the required synth-time values in Amplify Hosting under Build settings â†
 - `APP_CALLBACK_URL` (for example `http://localhost:5173` for local sandbox or your deployed frontend URL)
 - `IDC_IDENTITY_STORE_ID` (your Identity Store ID)
 - `ADMIN_GROUP_NAME` (the IDC admin group display name)
+- `AUDITOR_GROUP_NAME` (the IDC auditor group display name; defaults to `AWSTeamAuditors` if unset)
 
 For local sandbox runs, set the same values in your shell before `npx ampx sandbox`. The convenience script `scripts/set-sandbox-env.sh` does this â€” edit its values, then **source** it (do not execute it, or the exports won't persist):
 

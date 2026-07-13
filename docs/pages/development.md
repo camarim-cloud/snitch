@@ -179,6 +179,7 @@ Write **why**, not what. Only add a comment when the reason is non-obvious: a hi
 | `APP_CALLBACK_URL` | `amplify/backend.ts` | Required synth-time env var; define it in Amplify Hosting or export it locally (defaults to `http://localhost:5173` if unset) |
 | `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` | Required synth-time env var; define it in Amplify Hosting or export it locally |
 | `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` | Required synth-time env var; define it in Amplify Hosting or export it locally |
+| `AUDITOR_GROUP_NAME` | `preTokenGenerationHandler` | Synth-time env var with a fallback default (`AWSTeamAuditors`); define it in Amplify Hosting or export it locally to point at your IDC auditor group |
 | `AVP_POLICY_STORE_ID` | All AVP-touching handlers | CDK token resolved at deploy time |
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD + evaluateAccess | CDK token resolved at deploy time |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` | CDK token resolved at deploy time |
@@ -189,7 +190,7 @@ All are set in `amplify/backend.ts` via `addEnvironment(...)` on each function r
 
 ### Deploying the Sandbox — `scripts/set-sandbox-env.sh`
 
-The four **synth-time** variables (`COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_NAME`) must be present in the shell that runs `npm run sandbox`. If any is missing, synthesis fails with:
+The **synth-time** variables (`COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_NAME`, and `AUDITOR_GROUP_NAME`) must be present in the shell that runs `npm run sandbox`. `AUDITOR_GROUP_NAME` has a fallback default (`AWSTeamAuditors`), so a missing value there does not fail synth; the others are required. If a required one is missing, synthesis fails with:
 
 ```
 [AssemblyError] Environment variable COGNITO_DOMAIN_PREFIX is required for synth-time Cognito config.
@@ -217,4 +218,4 @@ The script validates that all four variables are non-empty (aborting otherwise) 
 In Amplify Hosting, set these four variables in the app's environment-variable configuration instead of sourcing the script.
 
 {: .note }
-`IDC_IDENTITY_STORE_ID` and `ADMIN_GROUP_NAME` are plain string values embedded at CDK synthesis time — they are **not** CloudFormation dynamic references (`{{resolve:secretsmanager:...}}`). This is intentional: Lambda environment variables in Amplify Gen 2's nested stacks cannot resolve dynamic references because CDK generates environment-agnostic stacks with pseudo-parameter ARNs that CloudFormation cannot expand inside `{{resolve:...}}` strings.
+`IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_NAME`, and `AUDITOR_GROUP_NAME` are plain string values embedded at CDK synthesis time — they are **not** CloudFormation dynamic references (`{{resolve:secretsmanager:...}}`). This is intentional: Lambda environment variables in Amplify Gen 2's nested stacks cannot resolve dynamic references because CDK generates environment-agnostic stacks with pseudo-parameter ARNs that CloudFormation cannot expand inside `{{resolve:...}}` strings.

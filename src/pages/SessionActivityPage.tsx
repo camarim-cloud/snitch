@@ -13,49 +13,34 @@ import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
-import Modal from "@cloudscape-design/components/modal";
 import Pagination from "@cloudscape-design/components/pagination";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import Table from "@cloudscape-design/components/table";
-import TextContent from "@cloudscape-design/components/text-content";
 import TextFilter from "@cloudscape-design/components/text-filter";
-import Textarea from "@cloudscape-design/components/textarea";
-import FormField from "@cloudscape-design/components/form-field";
 
 const client = generateClient<Schema>();
 
 const PAGE_SIZE = 10;
 
-const ALL_STATUSES = [
-  "PENDING",
-  "PENDING_APPROVAL",
-  "SCHEDULED",
-  "ACTIVE",
-  "EXPIRED",
-  "REVOKED",
-  "REJECTED",
-  "FAILED",
-] as const;
+// A session exists once the permission set was assigned. These are the statuses a
+// request with an activatedAt timestamp can hold: in-progress (ACTIVE) or ended.
+const SESSION_STATUSES = ["ACTIVE", "EXPIRED", "REVOKED"] as const;
 
 const STATUS_FILTER_OPTIONS: SelectProps.Option[] = [
   { label: "All statuses", value: "" },
-  ...ALL_STATUSES.map((s) => ({ label: s, value: s })),
+  ...SESSION_STATUSES.map((s) => ({ label: s, value: s })),
 ];
 
-export function ElevatedAccessPage() {
+export function SessionActivityPage() {
   const [allRequests, setAllRequests] = useState<AccessRequestRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [statusFilter, setStatusFilter] = useState<SelectProps.Option>(
     STATUS_FILTER_OPTIONS[0]
   );
-  const [revokeModalOpen, setRevokeModalOpen] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
-  const [revoking, setRevoking] = useState(false);
-  const [revokeError, setRevokeError] = useState("");
-  const [revokeComment, setRevokeComment] = useState("");
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
@@ -65,10 +50,11 @@ export function ElevatedAccessPage() {
       if (res.errors?.length) {
         throw new Error(res.errors.map((e) => e.message).join("; "));
       }
-      setAllRequests(toRows(res.data));
+      // Only requests that started a real session (permission set assigned) qualify.
+      setAllRequests(toRows(res.data).filter((r) => r.activatedAt));
     } catch (err) {
       setLoadError(
-        err instanceof Error ? err.message : "Failed to load access requests"
+        err instanceof Error ? err.message : "Failed to load session activity"
       );
     } finally {
       setLoading(false);
@@ -79,18 +65,6 @@ export function ElevatedAccessPage() {
     loadRequests();
   }, [loadRequests]);
 
-  useEffect(() => {
-    const subs = [
-      client.subscriptions.onAccessRequestCreated().subscribe({ next: () => void loadRequests() }),
-      client.subscriptions.onAccessRequestApproved().subscribe({ next: () => void loadRequests() }),
-      client.subscriptions.onAccessRequestRejected().subscribe({ next: () => void loadRequests() }),
-      client.subscriptions.onAccessRequestRevoked().subscribe({ next: () => void loadRequests() }),
-    ];
-    return () => subs.forEach((s) => s.unsubscribe());
-  }, [loadRequests]);
-
-  // Status dropdown is applied before the collection hook so text filter
-  // and pagination always operate on the already-status-filtered set.
   const filteredByStatus = statusFilter.value
     ? allRequests.filter((r) => r.status === statusFilter.value)
     : allRequests;
@@ -108,7 +82,7 @@ export function ElevatedAccessPage() {
         },
         empty: (
           <Box textAlign="center" color="inherit">
-            No access requests found
+            No sessions found
           </Box>
         ),
         noMatch: (
@@ -122,42 +96,10 @@ export function ElevatedAccessPage() {
     });
 
   const selected = (collectionProps.selectedItems as AccessRequestRow[])?.[0];
-  const canRevoke = selected?.status === "ACTIVE";
 
   function handleStatusFilterChange(option: SelectProps.Option) {
     setStatusFilter(option);
     actions.setSelectedItems([]);
-  }
-
-  async function handleRevoke() {
-    if (!selected) return;
-    setRevoking(true);
-    setRevokeError("");
-    try {
-      const res = await client.mutations.revokeAccess({
-        requestId: selected.id,
-        revokeComment: revokeComment.trim() || undefined,
-      });
-      if (res.errors?.length) {
-        throw new Error(res.errors.map((e) => e.message).join("; "));
-      }
-      setRevokeModalOpen(false);
-      setRevokeComment("");
-      actions.setSelectedItems([]);
-      setAllRequests((prev) =>
-        prev.map((r) =>
-          r.id === selected.id
-            ? { ...r, status: "REVOKED", revokeComment: revokeComment.trim() }
-            : r
-        )
-      );
-    } catch (err) {
-      setRevokeError(
-        err instanceof Error ? err.message : "Revoke failed. Please try again."
-      );
-    } finally {
-      setRevoking(false);
-    }
   }
 
   const counterText = filterProps.filteringText
@@ -165,14 +107,14 @@ export function ElevatedAccessPage() {
     : `(${filteredByStatus.length})`;
 
   return (
-    <ContentLayout header={<Header variant="h1">Elevated Access</Header>}>
+    <ContentLayout header={<Header variant="h1">Session Activity</Header>}>
       <SpaceBetween size="m">
         {loadError && <Alert type="error">{loadError}</Alert>}
 
         <Table
           {...collectionProps}
           loading={loading}
-          loadingText="Loading access requests"
+          loadingText="Loading session activity"
           items={items}
           selectionType="single"
           columnDefinitions={[
@@ -200,7 +142,7 @@ export function ElevatedAccessPage() {
                   {r.status}
                 </StatusIndicator>
               ),
-              width: 180,
+              width: 160,
             },
             {
               id: "duration",
@@ -209,14 +151,14 @@ export function ElevatedAccessPage() {
               width: 140,
             },
             {
-              id: "createdAt",
-              header: "Requested at",
-              cell: (r) => r.createdAt,
+              id: "activatedAt",
+              header: "Activated at",
+              cell: (r) => r.activatedAt || "—",
             },
             {
-              id: "revokeComment",
-              header: "Revoke reason",
-              cell: (r) => r.revokeComment || "—",
+              id: "deactivatedAt",
+              header: "Deactivated at",
+              cell: (r) => r.deactivatedAt || "—",
             },
           ]}
           filter={
@@ -245,34 +187,16 @@ export function ElevatedAccessPage() {
               counter={counterText}
               actions={
                 <SpaceBetween direction="horizontal" size="xs">
-                  <Button
-                    iconName="refresh"
-                    loading={loading}
-                    onClick={loadRequests}
-                  >
+                  <Button iconName="refresh" loading={loading} onClick={loadRequests}>
                     Refresh
                   </Button>
-                  <Button
-                    disabled={!selected}
-                    onClick={() => setDetailsModalOpen(true)}
-                  >
-                    View Details
-                  </Button>
-                  <Button
-                    variant="primary"
-                    disabled={!canRevoke}
-                    onClick={() => {
-                      setRevokeError("");
-                      setRevokeComment("");
-                      setRevokeModalOpen(true);
-                    }}
-                  >
-                    Revoke Access
+                  <Button disabled={!selected} onClick={() => setDetailsModalOpen(true)}>
+                    View Session Logs
                   </Button>
                 </SpaceBetween>
               }
             >
-              All Access Requests
+              Elevated Access Sessions
             </Header>
           }
           pagination={<Pagination {...paginationProps} />}
@@ -285,67 +209,6 @@ export function ElevatedAccessPage() {
             onDismiss={() => setDetailsModalOpen(false)}
           />
         )}
-
-        <Modal
-          visible={revokeModalOpen}
-          onDismiss={() => setRevokeModalOpen(false)}
-          header="Revoke access"
-          footer={
-            <Box float="right">
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button
-                  variant="link"
-                  onClick={() => setRevokeModalOpen(false)}
-                  disabled={revoking}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  loading={revoking}
-                  onClick={handleRevoke}
-                >
-                  Confirm revocation
-                </Button>
-              </SpaceBetween>
-            </Box>
-          }
-        >
-          <SpaceBetween size="m">
-            {revokeError && <Alert type="error">{revokeError}</Alert>}
-            {selected && (
-              <TextContent>
-                <p>
-                  This will immediately signal the Step Function to proceed to
-                  permission removal for:
-                </p>
-                <p>
-                  <strong>User:</strong> {selected.userLabel}
-                  <br />
-                  <strong>Account:</strong> {selected.accountId}
-                  <br />
-                  <strong>Permission Set:</strong> {selected.permissionSetName}
-                  <br />
-                  <strong>Duration:</strong> {formatDuration(selected.durationMinutes)}
-                  <br />
-                  <strong>Requested at:</strong> {selected.createdAt}
-                </p>
-                <p>This action cannot be undone.</p>
-              </TextContent>
-            )}
-            <FormField
-              label="Justification"
-              description="Reason for revoking access early. Stored with the request for audit purposes."
-            >
-              <Textarea
-                value={revokeComment}
-                onChange={({ detail }) => setRevokeComment(detail.value)}
-                placeholder="Enter the reason for revoking access..."
-                rows={3}
-              />
-            </FormField>
-          </SpaceBetween>
-        </Modal>
       </SpaceBetween>
     </ContentLayout>
   );

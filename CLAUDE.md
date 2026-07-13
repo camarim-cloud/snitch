@@ -17,6 +17,7 @@ A fullstack application for managing privileged access to AWS accounts. Admins d
 - Optional approval gate on policies: requests pause at `PENDING_APPROVAL` until a configured approver acts (or the 24-hour timeout fires)
 - Approval Policy management: configure which Cognito users/groups can approve requests per account (with optional permission set conditions); persisted as Cedar `approve` policies in AVP
 - Elevated Access page (admin-only): view all requests across all users, revoke any ACTIVE request early, and inspect the full CloudTrail audit trail for each request window
+- Auditor pages (auditor-only, read-only): **Approval History** (every approval-required request with its decision, approver, comment, and decision time) and **Session Activity** (every real elevated-access session with its CloudTrail event log). Gated by the `Auditors` group, configured exactly like `Admins` (see `AUDITOR_GROUP_NAME`)
 - Settings page (admin-only): configure application-level settings — CloudTrail log group, Slack app credentials, and per-channel notification toggles
 - Notifications: Slack + Amazon SNS alerts for access requested / finished / approval-required events, each toggled independently in Settings (see the Notifications section below)
 - Responsive UI built with Cloudscape Design System
@@ -70,10 +71,14 @@ snitch/
 │           └── deleteApprovalPolicyHandler.ts     # Deletes ApprovalPolicy record + AVP approve policy
 ├── src/
 │   ├── components/             # Reusable UI components
+│   │   ├── GroupGuard.tsx           # Route guard: renders children only if cognito:groups includes a given group
+│   │   ├── AdminGuard.tsx           # Thin wrapper over GroupGuard for the "Admins" group
+│   │   └── RequestDetailsModal.tsx  # Shared read-only request details + CloudTrail log viewer (showCloudTrail prop)
 │   ├── hooks/                  # Custom React hooks
 │   ├── utils/
 │   │   ├── duration.ts              # Shared: todayDateStr, minutesToMaxDuration, maxDurationToMinutes, formatDuration
-│   │   └── accessRequestStatus.ts   # Shared: accessRequestStatusType — maps request status string → Cloudscape StatusIndicator type
+│   │   ├── accessRequestStatus.ts   # Shared: accessRequestStatusType — maps request status string → Cloudscape StatusIndicator type
+│   │   └── accessRequestRow.ts      # Shared: AccessRequestRow type + toRow/toRows — flattened projection of AccessRequestItem
 │   ├── types/                  # Shared TypeScript types
 │   ├── pages/
 │   │   ├── PrivilegedPoliciesPage.tsx  # Admin CRUD for privileged policies (requiresApproval toggle only)
@@ -81,6 +86,8 @@ snitch/
 │   │   ├── RequestAccessPage.tsx       # End-user JIT access request form + request history
 │   │   ├── ApproveRequestsPage.tsx     # Any authenticated approver: review, approve, or reject pending requests
 │   │   ├── ElevatedAccessPage.tsx      # Admin page: view all requests, revoke ACTIVE ones early, view CloudTrail audit logs
+│   │   ├── ApprovalHistoryPage.tsx     # Auditor page (read-only): approval-required requests + their decisions
+│   │   ├── SessionActivityPage.tsx     # Auditor page (read-only): real sessions + per-session CloudTrail logs
 │   │   └── SettingsPage.tsx            # Admin page: configure app-level settings (CloudTrail log group)
 │   ├── test/
 │   │   └── setup.ts            # Vitest setup (jest-dom matchers)
@@ -180,9 +187,9 @@ AssignPermissionSet → WaitForEarlyRevocation → RemovePermissionSet
 | `approveRequestHandler.ts` | data | Guards self-approval via `requesterCognitoSub`; checks AVP `IsAuthorized` (approve/Account + permissionSetArn context); calls `SendTaskSuccess` to resume state machine |
 | `rejectRequestHandler.ts` | data | Guards self-rejection via `requesterCognitoSub`; checks AVP `IsAuthorized` (approve/Account + permissionSetArn context); sets `REJECTED` atomically, calls `SendTaskFailure` |
 | `listPendingApprovalsHandler.ts` | data | Scans `PENDING_APPROVAL` requests; filters by AVP `IsAuthorized` per unique `(accountId, permissionSetArn)` pair |
-| `listAllAccessRequestsHandler.ts` | data | Returns all requests across all users (admin-only, newest first) |
+| `listAllAccessRequestsHandler.ts` | data | Returns all requests across all users (newest first). Authorized for `Admins` (Elevated Access) **and** `Auditors` (Approval History + Session Activity) via `allow.groups(["Admins", "Auditors"])` |
 | `revokeAccessHandler.ts` | data | Signals `WaitForEarlyRevocation` via `SendTaskSuccess`; persists optional `revokeComment` for audit |
-| `getCloudTrailLogsHandler.ts` | data | Reads configured log group from AppSettingsTable; calls CloudWatch Logs `FilterLogEvents` with email-based filter; returns parsed CloudTrail events |
+| `getCloudTrailLogsHandler.ts` | data | Reads configured log group from AppSettingsTable; calls CloudWatch Logs `FilterLogEvents` with email-based filter; returns parsed CloudTrail events. Authorized for `Admins` **and** `Auditors` |
 
 `approveRequest`, `rejectRequest`, `listPendingApprovals`, `listAllAccessRequests`, `revokeAccess` are in the `data` stack (`resourceGroupName: "data"`) — see the Architecture section below for why.
 
@@ -281,6 +288,7 @@ permit (
 |---|---|
 | `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
 | `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
+| `AUDITOR_GROUP_NAME` | `preTokenGenerationHandler` — display name of the IDC group aliased to the `Auditors` claim; synth-time env var with a fallback default (`AWSTeamAuditors`) so pre-existing deploys keep working |
 | `AVP_POLICY_STORE_ID` | All AVP-touching handlers (create/update/delete policies, evaluate access, approve/reject/listPending) |
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD handlers + evaluateAccess |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
@@ -580,6 +588,12 @@ IAM grants and env vars for `data`-stack functions are set in `backend.ts` using
 This means: non-admin users who are configured as approvers (via an `ApprovalPolicy` record) can access the `ApproveRequestsPage` and act on requests for the accounts and permission sets they're authorized for. Admins with no `ApprovalPolicy` entries will see an empty list.
 
 The `ApproveRequestsPage` route has **no `AdminGuard`** — it is accessible to all authenticated users.
+
+### Auditor pages — group-gated, read-only
+
+The **Approval History** and **Session Activity** pages are wrapped in `<GroupGuard group="Auditors">` (the generalized guard `AdminGuard` now delegates to). The `Auditors` claim is minted by `preTokenGenerationHandler` from `AUDITOR_GROUP_NAME`, exactly mirroring the `Admins`/`ADMIN_GROUP_NAME` bridge — a user in both IDC groups receives both claims. Neither claim needs a real Cognito user-pool group; `allow.groups(["Admins", "Auditors"])` matches the injected claim string.
+
+Both pages are strictly read-only (no mutations, no subscriptions — load-on-mount + Refresh) and reuse the same data path as the admin Elevated Access page: `listAllAccessRequests` (broadened to Auditors) plus the shared `RequestDetailsModal`/`accessRequestRow` modules. Approval History filters to `requiresApproval === true` and opens the modal with `showCloudTrail={false}` (a never-activated request has no session window); Session Activity filters to rows with an `activatedAt` timestamp and opens the modal with CloudTrail logs. The `decidedAt` field on `AccessRequestItem` (written by `approveRequest`/`rejectRequest`) is the durable "Decided at" value, since `updatedAt` is overwritten once an approved request advances through the workflow.
 
 **AppSync identity — access token, not ID token.** AppSync forwards the Cognito **access token** to Lambda resolvers, not the ID token. The access token's claims only include `sub`, `cognito:groups`, and standard OIDC fields — custom attributes like `email` are absent.
 

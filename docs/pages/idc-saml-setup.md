@@ -40,7 +40,7 @@ User → clicks "Sign out" in the app
 
 CDK reads synth-time values from environment variables only.
 
-- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are required environment variables. Define them directly in Amplify Hosting under Build settings → Environment variables for hosted deployments, or export them in your shell before running `npm run sandbox` for local sandbox work.
+- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are required environment variables; `AUDITOR_GROUP_NAME` is optional (it falls back to `AWSTeamAuditors`). Define them directly in Amplify Hosting under Build settings → Environment variables for hosted deployments, or export them in your shell before running `npm run sandbox` for local sandbox work.
 - **At deploy time via CloudFormation dynamic reference**: `IDC_SAML_METADATA_URL` is referenced as `{{resolve:secretsmanager:snitch/auth-config:SecretString:IDC_SAML_METADATA_URL}}` in the SAML identity provider resource property, where CloudFormation supports this expansion.
 
 ### Managed Login Page
@@ -142,6 +142,7 @@ export COGNITO_DOMAIN_PREFIX="snitch-auth"
 export APP_CALLBACK_URL="http://localhost:5173"
 export IDC_IDENTITY_STORE_ID="d-xxxxxxxxxxxx"
 export ADMIN_GROUP_NAME="SnitchAdmins"
+export AUDITOR_GROUP_NAME="SnitchAuditors"
 ```
 
 | Field | Description |
@@ -149,6 +150,7 @@ export ADMIN_GROUP_NAME="SnitchAdmins"
 | `IDC_SAML_METADATA_URL` | SAML metadata URL copied from the IDC application in Step 2 |
 | `IDC_IDENTITY_STORE_ID` | Identity Store ID copied in Step 3 |
 | `ADMIN_GROUP_NAME` | Display name of the IDC group whose members should receive the Cognito `Admins` group claim |
+| `AUDITOR_GROUP_NAME` | Display name of the IDC group whose members should receive the Cognito `Auditors` group claim (read-only Approval History + Session Activity pages). Optional — defaults to `AWSTeamAuditors`. |
 | `COGNITO_DOMAIN_PREFIX` | The unique prefix chosen in Step 1. Can be supplied as the `COGNITO_DOMAIN_PREFIX` environment variable instead of in the secret. |
 | `APP_CALLBACK_URL` | The production URL of the deployed frontend (e.g. `https://myapp.example.com`). Use `http://localhost:5173` for local sandbox. Can be supplied as the `APP_CALLBACK_URL` environment variable instead of in the secret. |
 
@@ -165,6 +167,7 @@ aws secretsmanager create-secret \
     "IDC_SAML_METADATA_URL": "https://...",
     "IDC_IDENTITY_STORE_ID": "d-xxxxxxxxxxxx",
     "ADMIN_GROUP_NAME": "SnitchAdmins",
+    "AUDITOR_GROUP_NAME": "SnitchAuditors",
     "COGNITO_DOMAIN_PREFIX": "snitch-auth",
     "APP_CALLBACK_URL": "http://localhost:5173"
   }'
@@ -208,6 +211,8 @@ After updating the Audience URI:
 4. Click **"Sign out"** — the browser should return to the Cognito managed login page, not re-authenticate automatically.
 5. For a user that belongs to the `ADMIN_GROUP_NAME` IDC group: navigate to **Privileged Policies** — the page loads.
 6. For a user that does NOT belong to `ADMIN_GROUP_NAME`: the same route shows **Access denied**.
+7. For a user that belongs to the `AUDITOR_GROUP_NAME` IDC group: navigate to **Approval History** / **Session Activity** — the pages load.
+8. For a user that does NOT belong to `AUDITOR_GROUP_NAME`: the same routes show **Access denied**.
 
 ---
 
@@ -234,6 +239,7 @@ npm run sandbox
 | SAML login fails with `Audience URI mismatch` | Placeholder Audience URI still set | Update IDC app Audience URI to `urn:amazon:cognito:sp:<USER_POOL_ID>` (Step 5) |
 | Login redirects to IDC but fails with `User not assigned` | IDC user or group not assigned to the application | Assign the user or their group to the IDC SAML application (Step 2, step 8) |
 | Admin pages show **Access denied** for an IDC admin | `ADMIN_GROUP_NAME` in the secret doesn't match the IDC group's display name | Verify the exact group display name in IDC and update the secret |
+| Auditor pages show **Access denied** for an IDC auditor | `AUDITOR_GROUP_NAME` doesn't match the IDC group's display name, or the user hasn't re-authenticated since being added | Verify the exact group display name in IDC (set `AUDITOR_GROUP_NAME` to match), then sign out and back in to mint a fresh token |
 | `getMyIDCUser` returns `null` after login | IDC `UserName` attribute doesn't match the user's email | Verify the IDC attribute mapping in Step 2 maps `email` to `${user:email}` |
 | `PreTokenGeneration failed: not authorized to perform secretsmanager:GetSecretValue` | Pre-token Lambda was deployed before the IAM policy or env vars were applied | Run `npm run sandbox` to redeploy — `IDC_IDENTITY_STORE_ID` and `ADMIN_GROUP_NAME` are now embedded at synth time, no IAM permission needed |
 | Admin pages show **Access denied** after login even for admin users | Pre-token generation Lambda didn't inject IDC groups (e.g., `IDC_IDENTITY_STORE_ID` env var was empty on first deploy) | Run `npm run sandbox` to redeploy the Lambda with the correct env vars, then sign out and back in to get a fresh token |

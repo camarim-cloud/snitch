@@ -133,6 +133,9 @@ const schema = a.schema({
     deactivatedAt: a.string(),
     approvedBy: a.string(),
     approverComment: a.string(),
+    // Immutable timestamp of the approve/reject decision. Distinct from updatedAt,
+    // which the workflow lambdas overwrite after an approved request advances.
+    decidedAt: a.string(),
     revokeComment: a.string(),
     createdAt: a.string(),
     updatedAt: a.string(),
@@ -339,12 +342,13 @@ const schema = a.schema({
     .handler(a.handler.function(rejectRequestFunction))
     .authorization((allow) => [allow.authenticated()]),
 
-  // Returns every access request across all users, newest first. Admin-only.
+  // Returns every access request across all users, newest first.
+  // Admins (Elevated Access page) and Auditors (Approval History / Session Activity).
   listAllAccessRequests: a
     .query()
     .returns(a.ref("AccessRequestItem").array())
     .handler(a.handler.function(listAllAccessRequestsFunction))
-    .authorization((allow) => [allow.group("Admins")]),
+    .authorization((allow) => [allow.groups(["Admins", "Auditors"])]),
 
   // Signals the WaitForEarlyRevocation state to proceed to RemovePermissionSet.
   // Admin-only. The request must have status ACTIVE.
@@ -477,7 +481,7 @@ const schema = a.schema({
     })
     .returns(a.ref("CloudTrailLogEvent").array())
     .handler(a.handler.function(getCloudTrailLogsFunction))
-    .authorization((allow) => [allow.group("Admins")]),
+    .authorization((allow) => [allow.groups(["Admins", "Auditors"])]),
 });
 
 export type Schema = ClientSchema<typeof schema>;

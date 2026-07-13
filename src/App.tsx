@@ -8,12 +8,15 @@ import SideNavigation, { SideNavigationProps } from "@cloudscape-design/componen
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 
 import { AdminGuard } from "./components/AdminGuard";
+import { GroupGuard } from "./components/GroupGuard";
 import { HelpPanelContext } from "./components/HelpPanelContext";
+import { ApprovalHistoryPage } from "./pages/ApprovalHistoryPage";
 import { ApprovalPolicyPage } from "./pages/ApprovalPolicyPage";
 import { ApproveRequestsPage } from "./pages/ApproveRequestsPage";
 import { ElevatedAccessPage } from "./pages/ElevatedAccessPage";
 import { PrivilegedPoliciesPage } from "./pages/PrivilegedPoliciesPage";
 import { RequestAccessPage } from "./pages/RequestAccessPage";
+import { SessionActivityPage } from "./pages/SessionActivityPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 const NAV_ITEMS: SideNavigationProps.Item[] = [
@@ -28,6 +31,15 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
       { type: "link", text: "Approval Policies", href: "#/approval-policies" },
       { type: "link", text: "Elevated Access", href: "#/elevated-access" },
       { type: "link", text: "Settings", href: "#/settings" },
+    ],
+  },
+  {
+    type: "section",
+    text: "Auditor",
+    defaultExpanded: true,
+    items: [
+      { type: "link", text: "Approval History", href: "#/approval-history" },
+      { type: "link", text: "Session Activity", href: "#/session-activity" },
     ],
   },
 ];
@@ -137,6 +149,22 @@ function App() {
                 <AdminGuard>
                   <SettingsPage />
                 </AdminGuard>
+              }
+            />
+            <Route
+              path="/approval-history"
+              element={
+                <GroupGuard group="Auditors">
+                  <ApprovalHistoryPage />
+                </GroupGuard>
+              }
+            />
+            <Route
+              path="/session-activity"
+              element={
+                <GroupGuard group="Auditors">
+                  <SessionActivityPage />
+                </GroupGuard>
               }
             />
           </Routes>

@@ -97,7 +97,11 @@ See [Step 5 of the IAM Identity Center Setup guide]({% link pages/idc-saml-setup
 
 Admin pages are gated by membership in the IDC group whose display name matches `ADMIN_GROUP_NAME` in the `snitch/auth-config` secret. Add users to that IDC group to grant them admin access — no Cognito console changes are needed.
 
-### 3. Configure CloudTrail Log Group (Optional)
+### 3. Grant Auditor Access
+
+The read-only Auditor pages (**Approval History** and **Session Activity**) are gated the same way, by membership in the IDC group whose display name matches `AUDITOR_GROUP_NAME` (defaults to `AWSTeamAuditors`). Add users to that IDC group to let them review approval decisions and CloudTrail session activity without any ability to change access. Admin and Auditor membership are independent — a user can hold either, both, or neither. Users must sign out and back in after being added, so the new group claim is minted at token generation.
+
+### 4. Configure CloudTrail Log Group (Optional)
 
 IDC Users, Groups, AWS Accounts, Organizational Units, and Permission Sets are all fetched live from AWS APIs — no manual configuration is needed.
 

@@ -22,6 +22,9 @@ const outputDomainPrefix = requireSynthEnv("COGNITO_DOMAIN_PREFIX");
 const outputCallbackUrl = requireSynthEnv("APP_CALLBACK_URL");
 const outputIdentityStoreId = requireSynthEnv("IDC_IDENTITY_STORE_ID");
 const outputAdminGroupName = requireSynthEnv("ADMIN_GROUP_NAME");
+// Fallback default (unlike ADMIN_GROUP_NAME) so pre-existing deploys that don't yet
+// set this synth var keep deploying; operators override it to their IDC auditor group.
+const outputAuditorGroupName = requireSynthEnv("AUDITOR_GROUP_NAME", "AWSTeamAuditors");
 
 interface CognitoAuthParams {
   userPool: IUserPool;
@@ -84,6 +87,7 @@ export function setupCognitoAuth({
   );
   preTokenLambda.addEnvironment("IDC_IDENTITY_STORE_ID", outputIdentityStoreId);
   preTokenLambda.addEnvironment("ADMIN_GROUP_NAME", outputAdminGroupName);
+  preTokenLambda.addEnvironment("AUDITOR_GROUP_NAME", outputAuditorGroupName);
 
   // Amplify Gen 2 registers preTokenGeneration as V1 by default; V2_0 is required
   // so the Lambda response can use claimsAndScopeOverrideDetails. AWS rejects

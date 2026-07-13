@@ -3,7 +3,7 @@
 # set-sandbox-env.sh — populate the synth-time environment variables required to
 # deploy the Snitch Amplify Gen 2 sandbox (`npm run sandbox` → `npx ampx sandbox`).
 #
-# These four variables are read at CDK synthesis time in amplify/backend.ts and
+# These five variables are read at CDK synthesis time in amplify/backend.ts and
 # amplify/cognitoAuth.ts. Without them the sandbox deploy throws:
 #   "Environment variable <NAME> is required for synth-time Cognito config."
 #
@@ -30,8 +30,13 @@ export COGNITO_DOMAIN_PREFIX="${COGNITO_DOMAIN_PREFIX:-snitch-auth}"
 #   aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text
 export IDC_IDENTITY_STORE_ID="${IDC_IDENTITY_STORE_ID:-d-90676116fd}"
 
-# Cognito group name that gates admin-only pages.
+# Display name of the IDC group whose members receive the Cognito "Admins" claim
+# (gates admin-only pages).
 export ADMIN_GROUP_NAME="${ADMIN_GROUP_NAME:-AWSTeamAdmins}"
+
+# Display name of the IDC group whose members receive the Cognito "Auditors" claim
+# (gates the read-only Auditor pages: Approval History + Session Activity).
+export AUDITOR_GROUP_NAME="${AUDITOR_GROUP_NAME:-AWSTeamAuditors}"
 
 # --- Optional: has a sensible default ----------------------------------------
 
@@ -45,6 +50,7 @@ _snitch_missing=()
 [ -z "${COGNITO_DOMAIN_PREFIX}" ] && _snitch_missing+=("COGNITO_DOMAIN_PREFIX")
 [ -z "${IDC_IDENTITY_STORE_ID}" ] && _snitch_missing+=("IDC_IDENTITY_STORE_ID")
 [ -z "${ADMIN_GROUP_NAME}" ] && _snitch_missing+=("ADMIN_GROUP_NAME")
+[ -z "${AUDITOR_GROUP_NAME}" ] && _snitch_missing+=("AUDITOR_GROUP_NAME")
 [ -z "${APP_CALLBACK_URL}" ] && _snitch_missing+=("APP_CALLBACK_URL")
 
 if [ "${#_snitch_missing[@]}" -ne 0 ]; then
@@ -63,6 +69,7 @@ echo "Snitch sandbox env vars set:"
 echo "  COGNITO_DOMAIN_PREFIX = ${COGNITO_DOMAIN_PREFIX}"
 echo "  IDC_IDENTITY_STORE_ID = ${IDC_IDENTITY_STORE_ID}"
 echo "  ADMIN_GROUP_NAME      = ${ADMIN_GROUP_NAME}"
+echo "  AUDITOR_GROUP_NAME    = ${AUDITOR_GROUP_NAME}"
 echo "  APP_CALLBACK_URL      = ${APP_CALLBACK_URL}"
 echo
 echo "Next: npm run sandbox"

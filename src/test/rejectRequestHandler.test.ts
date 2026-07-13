@@ -197,6 +197,20 @@ describe("rejectRequestHandler", () => {
       expect(updateCmd.input.ExpressionAttributeValues[":null"]).toBeNull();
     });
 
+    it("writes an immutable decidedAt timestamp alongside REJECTED", async () => {
+      mockDynamoSend
+        .mockResolvedValueOnce({ Item: PENDING_REQUEST })
+        .mockResolvedValueOnce({});
+
+      const result = await handler(APPROVER_EVENT);
+
+      const updateCmd = mockDynamoSend.mock.calls[1][0];
+      expect(updateCmd.input.UpdateExpression).toContain("decidedAt = :now");
+      expect(result.status).toBe("REJECTED");
+      expect(typeof result.decidedAt).toBe("string");
+      expect(result.decidedAt).toBe(result.updatedAt);
+    });
+
     it("sends SendTaskFailure with error RequestRejected", async () => {
       mockDynamoSend
         .mockResolvedValueOnce({ Item: PENDING_REQUEST })

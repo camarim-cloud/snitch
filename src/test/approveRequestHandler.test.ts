@@ -202,6 +202,17 @@ describe("approveRequestHandler", () => {
       const updateCmd = mockDynamoSend.mock.calls[1][0];
       expect(updateCmd.input.ExpressionAttributeValues[":comment"]).toBe("LGTM");
     });
+
+    it("writes an immutable decidedAt timestamp (the Approval History decision time)", async () => {
+      const result = await handler(APPROVER_EVENT);
+
+      const updateCmd = mockDynamoSend.mock.calls[1][0];
+      expect(updateCmd.input.UpdateExpression).toContain("decidedAt = :now");
+      expect(typeof result.decidedAt).toBe("string");
+      // decidedAt is stamped with the same value as updatedAt at decision time,
+      // but unlike updatedAt it is never overwritten by the workflow lambdas.
+      expect(result.decidedAt).toBe(result.updatedAt);
+    });
   });
 
   it("propagates DynamoDB errors on GetCommand", async () => {

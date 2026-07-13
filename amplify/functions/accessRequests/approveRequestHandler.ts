@@ -68,7 +68,7 @@ export const handler = async (event: AppSyncEvent) => {
       TableName: TABLE_NAME,
       Key: { id: requestId },
       UpdateExpression:
-        "SET approvedBy = :by, approverComment = :comment, taskToken = :null, updatedAt = :now",
+        "SET approvedBy = :by, approverComment = :comment, taskToken = :null, updatedAt = :now, decidedAt = :now",
       ExpressionAttributeValues: {
         ":by": approverUsername,
         ":comment": approverComment ?? null,
@@ -99,6 +99,7 @@ export const handler = async (event: AppSyncEvent) => {
     approverComment: approverComment ?? null,
     taskToken: null,
     updatedAt: now,
+    decidedAt: now,
   };
 };
 
