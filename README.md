@@ -40,6 +40,10 @@ Admins can view all active and historical requests across every user, revoke liv
 
 When building policies, admins can browse live data from the connected AWS organization — IDC users, IDC groups, AWS accounts, Organizational Units, and Permission Sets — without leaving the app.
 
+### 7. Notifications
+
+Snitch can announce the access-request lifecycle over **Slack** and **Amazon SNS**, with per-channel toggles in Settings. Notifications fire when access is **requested**, when a session **finishes** (expires or is revoked), and when a request **needs approval**. Slack approval messages are interactive (Approve/Reject buttons); the SNS approval email links back to the in-app Approve Requests page so approvals stay fully authorized. See [docs/pages/notifications.md](docs/pages/notifications.md).
+
 ---
 
 ## Project Structure
@@ -53,6 +57,7 @@ amplify/          # Backend infrastructure (CDK) and Lambda functions
 │   ├── awsResources/     # AWS resource discovery (accounts, OUs, IDC users/groups, permission sets)
 │   ├── verifiedPermissions/  # Policy management and access evaluation
 │   ├── settings/         # App-level settings
+│   ├── notifications/    # Shared Slack + SNS notification sender
 │   └── accessRequests/   # Access request lifecycle and approval workflow
 src/              # Frontend (React)
 ├── pages/        # One file per route
@@ -145,4 +150,5 @@ npm run test:coverage   # with coverage
 | Access policy store | AWS Verified Permissions | Evaluates who is allowed to access what |
 | Policy metadata | Amazon DynamoDB | Stores policy records and request history |
 | Access workflow | AWS Step Functions | Assigns and revokes permission sets automatically |
+| Notifications | Amazon SNS + Slack API | Announces requested / finished / approval events to a topic and channel |
 | Resource discovery | AWS Lambda | Fetches live data from IAM Identity Center, AWS Organizations, and SSO |

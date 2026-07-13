@@ -91,6 +91,17 @@ The 24-hour heartbeat (`HeartbeatSeconds: 86400`) acts as a timeout — if no ap
 
 ---
 
+## Approval Notifications
+
+When a request enters `PENDING_APPROVAL`, `storeApprovalTokenHandler` stores the Step Functions task token and notifies approvers through up to two channels (both best-effort — a delivery failure never blocks the workflow):
+
+- **Slack** — an interactive Block Kit message with **Approve** / **Reject** buttons is posted to the configured channel. Clicking a button hits a public Lambda Function URL that verifies the Slack HMAC signature, resolves the clicker's Slack email → Cognito identity, runs the same AVP `IsAuthorized` check, and invokes `approveRequestHandler`/`rejectRequestHandler`.
+- **Amazon SNS** — when `snsApprovalNotificationsEnabled` is on, an email is published to the app-managed topic. Because SNS cannot identify the recipient who clicks a link, it carries **no** one-click actions; instead it links to the in-app **Approve Requests** page (`<APP_CALLBACK_URL>#/approve-requests`), where the approver signs in and acts with full authorization.
+
+See the [Notifications]({% link pages/notifications.md %}) page for the full delivery model and Settings toggles.
+
+---
+
 ## Approve Requests Page
 
 Any authenticated user can access the `ApproveRequestsPage`. Access is controlled by AVP `IsAuthorized`, not by Cognito group membership. This means:
@@ -116,7 +127,7 @@ The route has **no `AdminGuard`**.
 
 | Handler | Stack | Purpose |
 |---|---|---|
-| `storeApprovalTokenHandler.ts` | AccessRequestWorkflow | Called by `WaitForApproval`; stores task token, sets `PENDING_APPROVAL` |
+| `storeApprovalTokenHandler.ts` | AccessRequestWorkflow | Called by `WaitForApproval`; stores task token, sets `PENDING_APPROVAL`, and sends Slack + SNS approval notifications |
 | `approveRequestHandler.ts` | data | Guards self-approval; checks AVP `IsAuthorized`; calls `SendTaskSuccess` |
 | `rejectRequestHandler.ts` | data | Guards self-rejection; checks AVP `IsAuthorized`; sets `REJECTED`, calls `SendTaskFailure` |
 | `listPendingApprovalsHandler.ts` | data | Scans `PENDING_APPROVAL` requests; filters by AVP per `(accountId, permissionSetArn)` |

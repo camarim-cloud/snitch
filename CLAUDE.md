@@ -17,7 +17,8 @@ A fullstack application for managing privileged access to AWS accounts. Admins d
 - Optional approval gate on policies: requests pause at `PENDING_APPROVAL` until a configured approver acts (or the 24-hour timeout fires)
 - Approval Policy management: configure which Cognito users/groups can approve requests per account (with optional permission set conditions); persisted as Cedar `approve` policies in AVP
 - Elevated Access page (admin-only): view all requests across all users, revoke any ACTIVE request early, and inspect the full CloudTrail audit trail for each request window
-- Settings page (admin-only): configure application-level settings such as the CloudWatch log group where CloudTrail delivers audit events
+- Settings page (admin-only): configure application-level settings — CloudTrail log group, Slack app credentials, and per-channel notification toggles
+- Notifications: Slack + Amazon SNS alerts for access requested / finished / approval-required events, each toggled independently in Settings (see the Notifications section below)
 - Responsive UI built with Cloudscape Design System
 
 ## Technology Stack
@@ -57,6 +58,8 @@ snitch/
 │       │   ├── resource.ts               # Function definitions for getSettings and updateSettings
 │       │   ├── getSettingsHandler.ts     # Reads global settings record from AppSettingsTable
 │       │   └── updateSettingsHandler.ts  # Writes/overwrites global settings record
+│       ├── notifications/
+│       │   └── notify.ts                 # Shared best-effort Slack + SNS sender (notifyAccessEvent, notifyPendingApproval, formatDurationMinutes)
 │       └── verifiedPermissions/
 │           ├── cedarPolicyBuilder.ts              # Pure function: builds Cedar PERMIT statement (assume)
 │           ├── buildApprovalCedarPolicy.ts        # Pure function: builds Cedar PERMIT statement (approve)
@@ -189,7 +192,7 @@ AssignPermissionSet → WaitForEarlyRevocation → RemovePermissionSet
 
 | Handler | Stack | Purpose |
 |---|---|---|
-| `getSettingsHandler.ts` | data | Reads the single `settingKey: "global"` record from `AppSettingsTable`; returns `{ cloudTrailLogGroupName }` |
+| `getSettingsHandler.ts` | data | Reads the single `settingKey: "global"` record from `AppSettingsTable`; returns CloudTrail + Slack + notification-toggle fields plus the read-only `snsTopicArn` (from env) |
 | `updateSettingsHandler.ts` | data | Puts/overwrites the `settingKey: "global"` record; returns the saved settings |
 
 ## AWS Verified Permissions Integration
@@ -282,7 +285,9 @@ permit (
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD handlers + evaluateAccess |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
 | `ACCESS_REQUEST_TABLE_NAME` | All access-request handlers |
-| `APP_SETTINGS_TABLE_NAME` | `getSettingsHandler`, `updateSettingsHandler`, `getCloudTrailLogsHandler` |
+| `APP_SETTINGS_TABLE_NAME` | `getSettingsHandler`, `updateSettingsHandler`, `getCloudTrailLogsHandler`, `requestAccessHandler`, `removePermissionSetHandler`, `storeApprovalTokenHandler` |
+| `NOTIFICATIONS_TOPIC_ARN` | Notification publishers (`requestAccessHandler`, `removePermissionSetHandler`, `storeApprovalTokenHandler`); also read-only on `getSettingsHandler` to surface the ARN |
+| `APP_CALLBACK_URL` | `storeApprovalTokenHandler` — builds the SNS approval email's link to the Approve Requests page |
 
 ### IAM Permissions
 
@@ -299,7 +304,11 @@ permit (
 - `dynamodb:GetItem`, `UpdateItem`, `Scan` — scoped to `AccessRequestTable`
 
 **Settings handlers** (`getSettings`, `updateSettings`):
-- `dynamodb:GetItem`, `PutItem` — scoped to `AppSettingsTable`
+- `dynamodb:GetItem`, `UpdateItem` — scoped to `AppSettingsTable`
+
+**Notification publishers** (`requestAccess`, `removePermissionSet`, `storeApprovalToken`):
+- `sns:Publish` — scoped to the `AccessNotificationsTopic` ARN
+- `dynamodb:GetItem` — scoped to `AppSettingsTable` (reads the notification toggles/Slack config)
 
 **CloudTrail logs handler** (`getCloudTrailLogs`):
 - `dynamodb:GetItem` — scoped to `AppSettingsTable` (reads configured log group at runtime)
@@ -601,7 +610,19 @@ Old records written before this field was introduced will have `requesterCognito
 
 Application-level configuration (e.g. the CloudTrail log group) is stored in `AppSettingsTable`, a CDK-managed DynamoDB table created directly in `backend.ts` via `backend.createStack("AppSettingsStack")`. The table uses `settingKey: STRING` as the partition key and a single record (`settingKey: "global"`) holds all settings fields.
 
-`getAppSettings` / `updateAppSettings` are custom AppSync query/mutation backed by `getSettingsHandler` and `updateSettingsHandler` (both in `amplify/functions/settings/`). They always read/write the `settingKey: "global"` item — there is no pagination or list operation.
+`getAppSettings` / `updateAppSettings` are custom AppSync query/mutation backed by `getSettingsHandler` and `updateSettingsHandler` (both in `amplify/functions/settings/`). They always read/write the `settingKey: "global"` item — there is no pagination or list operation. `updateSettingsHandler` does a **partial** update (only the arguments actually provided are written; `null`/`undefined` are skipped, an explicit `""`/`false` is written).
+
+Fields on the `"global"` record: `cloudTrailLogGroupName`, `slackBotToken`, `slackChannelId`, `slackSigningSecret`, `slackNotificationsEnabled`, `snsNotificationsEnabled`, `snsApprovalNotificationsEnabled`. `getSettings` also returns `snsTopicArn` (read-only, from the `NOTIFICATIONS_TOPIC_ARN` env var — not stored in DynamoDB and not a mutation argument).
+
+### Notifications — Slack + SNS, best-effort
+
+`amplify/functions/notifications/notify.ts` is a shared, best-effort sender (failures logged, never thrown). It exports:
+
+- `notifyAccessEvent({ kind, request, settings, topicArn })` — dispatches `kind: "REQUESTED"` (from `requestAccessHandler`, after persist) and `kind: "FINISHED"` (from `removePermissionSetHandler`, after status → `EXPIRED`/`REVOKED`) to Slack (`chat.postMessage`) and/or SNS (`PublishCommand`), each gated by `slackNotificationsEnabled` / `snsNotificationsEnabled`.
+- `notifyPendingApproval({ request, settings, topicArn, appUrl })` — SNS-only approval email sent from `storeApprovalTokenHandler` when a request hits `PENDING_APPROVAL`, gated by `snsApprovalNotificationsEnabled`. It links to `${appUrl}#/approve-requests` (no one-click actions — SNS can't authorize the clicker; the Slack approval message stays interactive). Independent of the requested/finished toggles.
+- `formatDurationMinutes(minutes)` — shared duration formatter (also imported by `storeApprovalTokenHandler`).
+
+SNS uses one **app-managed** topic (`AccessNotificationsTopic`, created in `accessRequestWorkflow.ts`); admins subscribe endpoints manually. Publish + `NOTIFICATIONS_TOPIC_ARN` are granted to the three publisher lambdas there; settings-table read access is granted in `appSettings.ts`; `APP_CALLBACK_URL` for `storeApprovalToken` is set in `backend.ts`. SNS email subjects are dynamic: `AWS access session started/finished - <account (id)>` and `AWS access approval required - <account (id)>` (capped at SNS's 100-char limit).
 
 ### CloudTrail audit trail in Elevated Access
 
