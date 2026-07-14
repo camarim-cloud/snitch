@@ -10,7 +10,6 @@ const {
   mockListOUs,
   mockListPermissionSets,
   mockListCognitoUsers,
-  mockListCognitoGroups,
   mockCreatePolicy,
 } = vi.hoisted(() => ({
   mockListPolicies: vi.fn(),
@@ -20,7 +19,6 @@ const {
   mockListOUs: vi.fn(),
   mockListPermissionSets: vi.fn(),
   mockListCognitoUsers: vi.fn(),
-  mockListCognitoGroups: vi.fn(),
   mockCreatePolicy: vi.fn(),
 }));
 
@@ -36,7 +34,6 @@ vi.mock("aws-amplify/data", () => ({
       listOUs: mockListOUs,
       listPermissionSets: mockListPermissionSets,
       listCognitoUsers: mockListCognitoUsers,
-      listCognitoGroups: mockListCognitoGroups,
     },
     mutations: {
       createPrivilegedPolicyWithAVP: mockCreatePolicy,
@@ -91,7 +88,6 @@ function setupResourceMocks() {
   mockListOUs.mockResolvedValue({ data: [], errors: undefined });
   mockListPermissionSets.mockResolvedValue({ data: PERMISSION_SETS, errors: undefined });
   mockListCognitoUsers.mockResolvedValue({ data: [], errors: undefined });
-  mockListCognitoGroups.mockResolvedValue({ data: [], errors: undefined });
 }
 
 async function openCreateModal() {

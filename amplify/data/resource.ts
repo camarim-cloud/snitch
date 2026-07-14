@@ -7,7 +7,6 @@ import {
   listOUsFunction,
   listPermissionSetsFunction,
   listCognitoUsersFunction,
-  listCognitoGroupsFunction,
 } from "../functions/awsResources/resource";
 import {
   createPrivilegedPolicyFunction,
@@ -202,21 +201,10 @@ const schema = a.schema({
     displayName: a.string(),
   }),
 
-  CognitoGroup: a.customType({
-    groupName: a.string(),
-    description: a.string(),
-  }),
-
   listCognitoUsers: a
     .query()
     .returns(a.ref("CognitoUser").array())
     .handler(a.handler.function(listCognitoUsersFunction))
-    .authorization((allow) => [allow.group("Admins")]),
-
-  listCognitoGroups: a
-    .query()
-    .returns(a.ref("CognitoGroup").array())
-    .handler(a.handler.function(listCognitoGroupsFunction))
     .authorization((allow) => [allow.group("Admins")]),
 
   // AVP-backed mutations — named with suffix to avoid clashing with the

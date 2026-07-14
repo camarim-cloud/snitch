@@ -17,7 +17,7 @@ A fullstack application for managing privileged access to AWS accounts. Admins d
 - Optional approval gate on policies: requests pause at `PENDING_APPROVAL` until a configured approver acts (or the 24-hour timeout fires)
 - Approval Policy management: configure which Cognito users/groups can approve requests per account (with optional permission set conditions); persisted as Cedar `approve` policies in AVP
 - Elevated Access page (admin-only): view all requests across all users, revoke any ACTIVE request early, and inspect the full CloudTrail audit trail for each request window
-- Auditor pages (auditor-only, read-only): **Approval History** (every approval-required request with its decision, approver, comment, and decision time) and **Session Activity** (every real elevated-access session with its CloudTrail event log). Gated by the `Auditors` group, configured exactly like `Admins` (see `AUDITOR_GROUP_NAME`)
+- Auditor pages (auditor-only, read-only): **Approval History** (every approval-required request with its decision, approver, comment, and decision time) and **Session Activity** (every real elevated-access session with its CloudTrail event log). Gated by the `Auditors` group, configured exactly like `Admins` (see `AUDITOR_GROUP_ID`)
 - Settings page (admin-only): configure application-level settings — CloudTrail log group, Slack app credentials, and per-channel notification toggles
 - Notifications: Slack + Amazon SNS alerts for access requested / finished / approval-required events, each toggled independently in Settings (see the Notifications section below)
 - Responsive UI built with Cloudscape Design System
@@ -53,7 +53,7 @@ snitch/
 │   └── functions/
 │       ├── auth/
 │       │   ├── resource.ts                    # pre-token-generation function (resourceGroupName: "auth")
-│       │   └── preTokenGenerationHandler.ts   # Injects IDC groups into cognito:groups at token issue time
+│       │   └── preTokenGenerationHandler.ts   # Injects IDC group IDs into cognito:groups at token issue time
 │       ├── awsResources/       # Lambda resolvers: list IDC users/groups, accounts, OUs, permission sets
 │       ├── settings/
 │       │   ├── resource.ts               # Function definitions for getSettings and updateSettings
@@ -120,8 +120,8 @@ When `requiresApproval` is `true` on a `PrivilegedPolicy`:
 | `accountId` | string | The AWS account the approver can act on (composite PK hash key) |
 | `principalKey` | string | Composite sort key: `"${principalType}#${principalId}"` |
 | `accountName` | string | Display name for the account (denormalized) |
-| `principalType` | `USER` \| `GROUP` | Cognito user or Cognito group |
-| `principalId` | string | Cognito username (USER) or Cognito group name (GROUP) |
+| `principalType` | `USER` \| `GROUP` | Cognito user or IDC group |
+| `principalId` | string | Cognito username (USER) or IDC **GroupId** (GROUP) — the GroupId is what `preTokenGenerationHandler` injects into `cognito:groups`, so it matches at approval time |
 | `principalDisplayName` | string | Human-readable label |
 | `permissionSetArns` | string[] | Permission set ARNs used in the Cedar `when` clause (≥1 required) |
 | `permissionSetNames` | string[] | Display names (denormalized, parallel array) |
@@ -218,7 +218,7 @@ Action:    Snitch::Action::"assume"
 Context:   { permissionSetArn: String (required) }
 
 ── approve action ─────────────────────────────────────────────────────────────
-Principal: Snitch::Approver (Cognito username, memberOf ApproverGroup) | Snitch::ApproverGroup (Cognito group name)
+Principal: Snitch::Approver (Cognito username, memberOf ApproverGroup) | Snitch::ApproverGroup (IDC GroupId)
 Resource:  Snitch::Account (AWS account ID)
 Action:    Snitch::Action::"approve"
 Context:   { permissionSetArn: String (required) }
@@ -272,9 +272,9 @@ permit (
   ["arn:aws:sso:::permissionSet/ps-1", "arn:aws:sso:::permissionSet/ps-2"].contains(context.permissionSetArn)
 };
 
-// GROUP approver:
+// GROUP approver (principal id is the immutable IDC GroupId):
 permit (
-  principal in Snitch::ApproverGroup::"Approvers",
+  principal in Snitch::ApproverGroup::"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   action == Snitch::Action::"approve",
   resource == Snitch::Account::"111111111111"
 ) when {
@@ -287,8 +287,8 @@ permit (
 | Variable | Used by |
 |---|---|
 | `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
-| `ADMIN_GROUP_NAME` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
-| `AUDITOR_GROUP_NAME` | `preTokenGenerationHandler` — display name of the IDC group aliased to the `Auditors` claim; synth-time env var with a fallback default (`AWSTeamAuditors`) so pre-existing deploys keep working |
+| `ADMIN_GROUP_ID` | `preTokenGenerationHandler` — immutable IDC **GroupId** whose members receive the `Admins` claim; plain string set at CDK synth time. Injected into `cognito:groups`, so a rename of the group never breaks admin access |
+| `AUDITOR_GROUP_ID` | `preTokenGenerationHandler` — immutable IDC **GroupId** whose members receive the `Auditors` claim; synth-time env var, **optional** (unset ⇒ no user gets the claim, the backward-safe default) |
 | `AVP_POLICY_STORE_ID` | All AVP-touching handlers (create/update/delete policies, evaluate access, approve/reject/listPending) |
 | `PRIVILEGED_POLICY_TABLE_NAME` | Privileged policy CRUD handlers + evaluateAccess |
 | `APPROVAL_POLICY_TABLE_NAME` | `createApprovalPolicyHandler`, `deleteApprovalPolicyHandler` |
@@ -336,7 +336,7 @@ permit (
 - `action`: `{ actionType: "Snitch::Action", actionId: "approve" }`
 - `resource`: `{ entityType: "Snitch::Account", entityId: "<account-id>" }`
 - `context`: `{ contextMap: { permissionSetArn: { string: "<arn>" } } }`
-- `entities`: Cognito group memberships as `Snitch::Approver` → parents `Snitch::ApproverGroup`
+- `entities`: the caller's IDC group IDs (from the `cognito:groups` claim) as `Snitch::Approver` → parents `Snitch::ApproverGroup` (each parent `entityId` is an IDC GroupId)
 
 Both checks return `decision: "ALLOW"` or `"DENY"`. Always inject entity parents so group-based policies resolve correctly.
 
@@ -583,7 +583,7 @@ IAM grants and env vars for `data`-stack functions are set in `backend.ts` using
 
 ### Approval authorization — AVP-gated, not Cognito-group-gated
 
-`listPendingApprovals`, `approveRequest`, and `rejectRequest` are authorized with `allow.authenticated()` (any logged-in user can call them). The Lambda handler is the enforcement point: it calls AVP `IsAuthorized` with the caller's Cognito username as a `Snitch::Approver` principal, the request's `accountId` as a `Snitch::Account` resource, and the request's `permissionSetArn` in context — injecting the caller's Cognito groups as `Snitch::ApproverGroup` parents so group-based approval policies resolve.
+`listPendingApprovals`, `approveRequest`, and `rejectRequest` are authorized with `allow.authenticated()` (any logged-in user can call them). The Lambda handler is the enforcement point: it calls AVP `IsAuthorized` with the caller's Cognito username as a `Snitch::Approver` principal, the request's `accountId` as a `Snitch::Account` resource, and the request's `permissionSetArn` in context — injecting the caller's IDC group IDs (from the `cognito:groups` claim) as `Snitch::ApproverGroup` parents so group-based approval policies resolve.
 
 This means: non-admin users who are configured as approvers (via an `ApprovalPolicy` record) can access the `ApproveRequestsPage` and act on requests for the accounts and permission sets they're authorized for. Admins with no `ApprovalPolicy` entries will see an empty list.
 
@@ -591,7 +591,7 @@ The `ApproveRequestsPage` route has **no `AdminGuard`** — it is accessible to 
 
 ### Auditor pages — group-gated, read-only
 
-The **Approval History** and **Session Activity** pages are wrapped in `<GroupGuard group="Auditors">` (the generalized guard `AdminGuard` now delegates to). The `Auditors` claim is minted by `preTokenGenerationHandler` from `AUDITOR_GROUP_NAME`, exactly mirroring the `Admins`/`ADMIN_GROUP_NAME` bridge — a user in both IDC groups receives both claims. Neither claim needs a real Cognito user-pool group; `allow.groups(["Admins", "Auditors"])` matches the injected claim string.
+The **Approval History** and **Session Activity** pages are wrapped in `<GroupGuard group="Auditors">` (the generalized guard `AdminGuard` now delegates to). The `Auditors` claim is minted by `preTokenGenerationHandler` from `AUDITOR_GROUP_ID`, exactly mirroring the `Admins`/`ADMIN_GROUP_ID` bridge — a user in both IDC groups receives both claims. Neither claim needs a real Cognito user-pool group; `allow.groups(["Admins", "Auditors"])` matches the injected claim string.
 
 Both pages are strictly read-only (no mutations, no subscriptions — load-on-mount + Refresh) and reuse the same data path as the admin Elevated Access page: `listAllAccessRequests` (broadened to Auditors) plus the shared `RequestDetailsModal`/`accessRequestRow` modules. Approval History filters to `requiresApproval === true` and opens the modal with `showCloudTrail={false}` (a never-activated request has no session window); Session Activity filters to rows with an `activatedAt` timestamp and opens the modal with CloudTrail logs. The `decidedAt` field on `AccessRequestItem` (written by `approveRequest`/`rejectRequest`) is the durable "Decided at" value, since `updatedAt` is overwritten once an approved request advances through the workflow.
 

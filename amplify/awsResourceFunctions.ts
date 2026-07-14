@@ -34,7 +34,7 @@ export function setupAWSResourceFunctions({
 
   const cognitoListPolicy = new PolicyStatement({
     effect: Effect.ALLOW,
-    actions: ["cognito-idp:ListUsers", "cognito-idp:ListGroups"],
+    actions: ["cognito-idp:ListUsers"],
     resources: [userPool.userPoolArn],
   });
 
