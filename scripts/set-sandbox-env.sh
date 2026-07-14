@@ -30,13 +30,17 @@ export COGNITO_DOMAIN_PREFIX="${COGNITO_DOMAIN_PREFIX:-snitch-auth}"
 #   aws sso-admin list-instances --query 'Instances[0].IdentityStoreId' --output text
 export IDC_IDENTITY_STORE_ID="${IDC_IDENTITY_STORE_ID:-d-90676116fd}"
 
-# Display name of the IDC group whose members receive the Cognito "Admins" claim
-# (gates admin-only pages).
-export ADMIN_GROUP_NAME="${ADMIN_GROUP_NAME:-AWSTeamAdmins}"
+# GroupId of the IDC group whose members receive the Cognito "Admins" claim (gates admin-only
+# pages). Use the immutable GroupId (a UUID), not the display name, so renaming the group can't
+# break access. Find it with (read-only):
+#   aws identitystore list-groups --identity-store-id "${IDC_IDENTITY_STORE_ID}" \
+#     --query "Groups[?DisplayName=='AWSTeamAdmins'].GroupId" --output text
+export ADMIN_GROUP_ID="${ADMIN_GROUP_ID:-g-xxxxxxxxxx}"
 
-# Display name of the IDC group whose members receive the Cognito "Auditors" claim
-# (gates the read-only Auditor pages: Approval History + Session Activity).
-export AUDITOR_GROUP_NAME="${AUDITOR_GROUP_NAME:-AWSTeamAuditors}"
+# GroupId of the IDC group whose members receive the Cognito "Auditors" claim (gates the read-only
+# Auditor pages: Approval History + Session Activity). Optional — leave empty to grant Auditors to
+# no one. Find it the same way as ADMIN_GROUP_ID (filter on your auditor group's DisplayName).
+export AUDITOR_GROUP_ID="${AUDITOR_GROUP_ID:-}"
 
 # --- Optional: has a sensible default ----------------------------------------
 
@@ -49,8 +53,8 @@ export APP_CALLBACK_URL="${APP_CALLBACK_URL:-http://localhost:5173}"
 _snitch_missing=()
 [ -z "${COGNITO_DOMAIN_PREFIX}" ] && _snitch_missing+=("COGNITO_DOMAIN_PREFIX")
 [ -z "${IDC_IDENTITY_STORE_ID}" ] && _snitch_missing+=("IDC_IDENTITY_STORE_ID")
-[ -z "${ADMIN_GROUP_NAME}" ] && _snitch_missing+=("ADMIN_GROUP_NAME")
-[ -z "${AUDITOR_GROUP_NAME}" ] && _snitch_missing+=("AUDITOR_GROUP_NAME")
+# AUDITOR_GROUP_ID is intentionally optional (empty = no Auditors), so it is not validated here.
+[ -z "${ADMIN_GROUP_ID}" ] && _snitch_missing+=("ADMIN_GROUP_ID")
 [ -z "${APP_CALLBACK_URL}" ] && _snitch_missing+=("APP_CALLBACK_URL")
 
 if [ "${#_snitch_missing[@]}" -ne 0 ]; then
@@ -65,11 +69,16 @@ if [ "${IDC_IDENTITY_STORE_ID}" = "d-0000000000" ]; then
   echo "WARNING: IDC_IDENTITY_STORE_ID is still the placeholder 'd-0000000000' — edit it before deploying." >&2
 fi
 
+# Warn if the placeholder admin GroupId is still in place.
+if [ "${ADMIN_GROUP_ID}" = "g-xxxxxxxxxx" ]; then
+  echo "WARNING: ADMIN_GROUP_ID is still the placeholder 'g-xxxxxxxxxx' — set it to your IDC admin group's GroupId before deploying." >&2
+fi
+
 echo "Snitch sandbox env vars set:"
 echo "  COGNITO_DOMAIN_PREFIX = ${COGNITO_DOMAIN_PREFIX}"
 echo "  IDC_IDENTITY_STORE_ID = ${IDC_IDENTITY_STORE_ID}"
-echo "  ADMIN_GROUP_NAME      = ${ADMIN_GROUP_NAME}"
-echo "  AUDITOR_GROUP_NAME    = ${AUDITOR_GROUP_NAME}"
+echo "  ADMIN_GROUP_ID        = ${ADMIN_GROUP_ID}"
+echo "  AUDITOR_GROUP_ID      = ${AUDITOR_GROUP_ID:-(unset — no Auditors)}"
 echo "  APP_CALLBACK_URL      = ${APP_CALLBACK_URL}"
 echo
 echo "Next: npm run sandbox"

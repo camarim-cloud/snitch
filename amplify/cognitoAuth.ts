@@ -21,10 +21,13 @@ function requireSynthEnv(name: string, fallback?: string): string {
 const outputDomainPrefix = requireSynthEnv("COGNITO_DOMAIN_PREFIX");
 const outputCallbackUrl = requireSynthEnv("APP_CALLBACK_URL");
 const outputIdentityStoreId = requireSynthEnv("IDC_IDENTITY_STORE_ID");
-const outputAdminGroupName = requireSynthEnv("ADMIN_GROUP_NAME");
-// Fallback default (unlike ADMIN_GROUP_NAME) so pre-existing deploys that don't yet
-// set this synth var keep deploying; operators override it to their IDC auditor group.
-const outputAuditorGroupName = requireSynthEnv("AUDITOR_GROUP_NAME", "AWSTeamAuditors");
+// Immutable IDC GroupId (a UUID), not a display name — so renaming the IDC group never breaks the
+// Admins claim. Required.
+const outputAdminGroupId = requireSynthEnv("ADMIN_GROUP_ID");
+// Optional: no GroupId default is meaningful, so pass through empty rather than a placeholder. The
+// token handler only appends the Auditors claim when this id is set and matches a membership, so
+// unset = nobody gets Auditors (the backward-safe behavior the old display-name fallback provided).
+const outputAuditorGroupId = process.env.AUDITOR_GROUP_ID ?? "";
 
 interface CognitoAuthParams {
   userPool: IUserPool;
@@ -80,14 +83,13 @@ export function setupCognitoAuth({
       actions: [
         "identitystore:ListUsers",
         "identitystore:ListGroupMembershipsForMember",
-        "identitystore:DescribeGroup",
       ],
       resources: ["*"],
     })
   );
   preTokenLambda.addEnvironment("IDC_IDENTITY_STORE_ID", outputIdentityStoreId);
-  preTokenLambda.addEnvironment("ADMIN_GROUP_NAME", outputAdminGroupName);
-  preTokenLambda.addEnvironment("AUDITOR_GROUP_NAME", outputAuditorGroupName);
+  preTokenLambda.addEnvironment("ADMIN_GROUP_ID", outputAdminGroupId);
+  preTokenLambda.addEnvironment("AUDITOR_GROUP_ID", outputAuditorGroupId);
 
   // Amplify Gen 2 registers preTokenGeneration as V1 by default; V2_0 is required
   // so the Lambda response can use claimsAndScopeOverrideDetails. AWS rejects

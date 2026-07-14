@@ -19,7 +19,6 @@ import {
   listOUsFunction,
   listPermissionSetsFunction,
   listCognitoUsersFunction,
-  listCognitoGroupsFunction,
 } from "./functions/awsResources/resource";
 import {
   createPrivilegedPolicyFunction,
@@ -69,7 +68,6 @@ const backend = defineBackend({
   listOUsFunction,
   listPermissionSetsFunction,
   listCognitoUsersFunction,
-  listCognitoGroupsFunction,
   createPrivilegedPolicyFunction,
   updatePrivilegedPolicyFunction,
   deletePrivilegedPolicyFunction,
@@ -124,7 +122,6 @@ setupAWSResourceFunctions({
   ],
   cognitoFunctions: [
     backend.listCognitoUsersFunction.resources.lambda,
-    backend.listCognitoGroupsFunction.resources.lambda,
   ],
 });
 

@@ -118,9 +118,16 @@ export function SettingsPage() {
   const { openHelpPanel } = useHelpPanel();
 
   const [logGroupName, setLogGroupName] = useState("");
+  const [savedLogGroupName, setSavedLogGroupName] = useState("");
+  const [cloudTrailEditing, setCloudTrailEditing] = useState(false);
+
   const [slackBotToken, setSlackBotToken] = useState("");
   const [slackChannelId, setSlackChannelId] = useState("");
   const [slackSigningSecret, setSlackSigningSecret] = useState("");
+  const [savedSlackBotToken, setSavedSlackBotToken] = useState("");
+  const [savedSlackChannelId, setSavedSlackChannelId] = useState("");
+  const [savedSlackSigningSecret, setSavedSlackSigningSecret] = useState("");
+  const [slackEditing, setSlackEditing] = useState(false);
   const [slackNotificationsEnabled, setSlackNotificationsEnabled] = useState(false);
   const [snsNotificationsEnabled, setSnsNotificationsEnabled] = useState(false);
   const [snsApprovalNotificationsEnabled, setSnsApprovalNotificationsEnabled] = useState(false);
@@ -149,10 +156,21 @@ export function SettingsPage() {
       if (res.errors?.length) {
         throw new Error(res.errors.map((e) => e.message).join("; "));
       }
-      setLogGroupName(res.data?.cloudTrailLogGroupName ?? "");
-      setSlackBotToken(res.data?.slackBotToken ?? "");
-      setSlackChannelId(res.data?.slackChannelId ?? "");
-      setSlackSigningSecret(res.data?.slackSigningSecret ?? "");
+      const loadedLogGroup = res.data?.cloudTrailLogGroupName ?? "";
+      setLogGroupName(loadedLogGroup);
+      setSavedLogGroupName(loadedLogGroup);
+      setCloudTrailEditing(loadedLogGroup === "");
+
+      const loadedBotToken = res.data?.slackBotToken ?? "";
+      const loadedChannelId = res.data?.slackChannelId ?? "";
+      const loadedSigningSecret = res.data?.slackSigningSecret ?? "";
+      setSlackBotToken(loadedBotToken);
+      setSlackChannelId(loadedChannelId);
+      setSlackSigningSecret(loadedSigningSecret);
+      setSavedSlackBotToken(loadedBotToken);
+      setSavedSlackChannelId(loadedChannelId);
+      setSavedSlackSigningSecret(loadedSigningSecret);
+      setSlackEditing(loadedBotToken === "" && loadedChannelId === "" && loadedSigningSecret === "");
       setSlackNotificationsEnabled(res.data?.slackNotificationsEnabled ?? false);
       setSnsNotificationsEnabled(res.data?.snsNotificationsEnabled ?? false);
       setSnsApprovalNotificationsEnabled(res.data?.snsApprovalNotificationsEnabled ?? false);
@@ -173,12 +191,16 @@ export function SettingsPage() {
     setCloudTrailSaveStatus("idle");
     setCloudTrailSaveError("");
     try {
+      const trimmedLogGroup = logGroupName.trim();
       const res = await client.mutations.updateAppSettings({
-        cloudTrailLogGroupName: logGroupName.trim(),
+        cloudTrailLogGroupName: trimmedLogGroup,
       });
       if (res.errors?.length) {
         throw new Error(res.errors.map((e) => e.message).join("; "));
       }
+      setLogGroupName(trimmedLogGroup);
+      setSavedLogGroupName(trimmedLogGroup);
+      setCloudTrailEditing(false);
       setCloudTrailSaveStatus("success");
     } catch (err) {
       setCloudTrailSaveError(err instanceof Error ? err.message : "Failed to save settings");
@@ -193,14 +215,24 @@ export function SettingsPage() {
     setSlackSaveStatus("idle");
     setSlackSaveError("");
     try {
+      const trimmedBotToken = slackBotToken.trim();
+      const trimmedChannelId = slackChannelId.trim();
+      const trimmedSigningSecret = slackSigningSecret.trim();
       const res = await client.mutations.updateAppSettings({
-        slackBotToken: slackBotToken.trim(),
-        slackChannelId: slackChannelId.trim(),
-        slackSigningSecret: slackSigningSecret.trim(),
+        slackBotToken: trimmedBotToken,
+        slackChannelId: trimmedChannelId,
+        slackSigningSecret: trimmedSigningSecret,
       });
       if (res.errors?.length) {
         throw new Error(res.errors.map((e) => e.message).join("; "));
       }
+      setSlackBotToken(trimmedBotToken);
+      setSlackChannelId(trimmedChannelId);
+      setSlackSigningSecret(trimmedSigningSecret);
+      setSavedSlackBotToken(trimmedBotToken);
+      setSavedSlackChannelId(trimmedChannelId);
+      setSavedSlackSigningSecret(trimmedSigningSecret);
+      setSlackEditing(false);
       setSlackSaveStatus("success");
     } catch (err) {
       setSlackSaveError(err instanceof Error ? err.message : "Failed to save Slack settings");
@@ -233,6 +265,25 @@ export function SettingsPage() {
       setNotificationsSaving(false);
     }
   }
+
+  function handleCancelCloudTrail() {
+    setLogGroupName(savedLogGroupName);
+    setCloudTrailEditing(false);
+    setCloudTrailSaveStatus("idle");
+  }
+
+  function handleCancelSlack() {
+    setSlackBotToken(savedSlackBotToken);
+    setSlackChannelId(savedSlackChannelId);
+    setSlackSigningSecret(savedSlackSigningSecret);
+    setSlackEditing(false);
+    setSlackSaveStatus("idle");
+  }
+
+  const cloudTrailLocked = savedLogGroupName !== "" && !cloudTrailEditing;
+  const slackConfigured =
+    savedSlackBotToken !== "" || savedSlackChannelId !== "" || savedSlackSigningSecret !== "";
+  const slackLocked = slackConfigured && !slackEditing;
 
   return (
     <ContentLayout header={<Header variant="h1">Settings</Header>}>
@@ -276,19 +327,38 @@ export function SettingsPage() {
                   setCloudTrailSaveStatus("idle");
                 }}
                 placeholder="/aws/cloudtrail/my-trail"
-                disabled={loading}
+                disabled={loading || cloudTrailLocked}
               />
             </FormField>
 
             <Box float="right">
-              <Button
-                variant="primary"
-                onClick={handleSaveCloudTrail}
-                loading={cloudTrailSaving}
-                disabled={loading}
-              >
-                Save
-              </Button>
+              {cloudTrailLocked ? (
+                <Button
+                  onClick={() => {
+                    setCloudTrailEditing(true);
+                    setCloudTrailSaveStatus("idle");
+                  }}
+                  disabled={loading}
+                >
+                  Edit
+                </Button>
+              ) : (
+                <SpaceBetween direction="horizontal" size="xs">
+                  {savedLogGroupName !== "" && (
+                    <Button variant="link" onClick={handleCancelCloudTrail} disabled={loading}>
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    variant="primary"
+                    onClick={handleSaveCloudTrail}
+                    loading={cloudTrailSaving}
+                    disabled={loading}
+                  >
+                    Save
+                  </Button>
+                </SpaceBetween>
+              )}
             </Box>
           </SpaceBetween>
         </Container>
@@ -330,7 +400,7 @@ export function SettingsPage() {
                   setSlackSaveStatus("idle");
                 }}
                 placeholder="xoxb-..."
-                disabled={loading}
+                disabled={loading || slackLocked}
               />
             </FormField>
 
@@ -345,7 +415,7 @@ export function SettingsPage() {
                   setSlackSaveStatus("idle");
                 }}
                 placeholder="C01234ABCDE"
-                disabled={loading}
+                disabled={loading || slackLocked}
               />
             </FormField>
 
@@ -360,19 +430,38 @@ export function SettingsPage() {
                   setSlackSaveStatus("idle");
                 }}
                 placeholder="Slack signing secret"
-                disabled={loading}
+                disabled={loading || slackLocked}
               />
             </FormField>
 
             <Box float="right">
-              <Button
-                variant="primary"
-                onClick={handleSaveSlack}
-                loading={slackSaving}
-                disabled={loading}
-              >
-                Save
-              </Button>
+              {slackLocked ? (
+                <Button
+                  onClick={() => {
+                    setSlackEditing(true);
+                    setSlackSaveStatus("idle");
+                  }}
+                  disabled={loading}
+                >
+                  Edit
+                </Button>
+              ) : (
+                <SpaceBetween direction="horizontal" size="xs">
+                  {slackConfigured && (
+                    <Button variant="link" onClick={handleCancelSlack} disabled={loading}>
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    variant="primary"
+                    onClick={handleSaveSlack}
+                    loading={slackSaving}
+                    disabled={loading}
+                  >
+                    Save
+                  </Button>
+                </SpaceBetween>
+              )}
             </Box>
           </SpaceBetween>
         </Container>

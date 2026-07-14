@@ -43,9 +43,3 @@ export const listCognitoUsersFunction = defineFunction({
   entry: "./listCognitoUsersHandler.ts",
   timeoutSeconds: TIMEOUT,
 });
-
-export const listCognitoGroupsFunction = defineFunction({
-  name: "listCognitoGroups",
-  entry: "./listCognitoGroupsHandler.ts",
-  timeoutSeconds: TIMEOUT,
-});

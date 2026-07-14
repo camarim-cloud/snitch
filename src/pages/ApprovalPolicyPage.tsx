@@ -169,11 +169,13 @@ export function ApprovalPolicyPage() {
           }))
         );
       } else {
-        const res = await client.queries.listCognitoGroups();
+        const res = await client.queries.listIDCGroups();
         setPrincipalOptions(
           (res.data ?? []).map((g) => ({
-            label: g?.groupName ?? "",
-            value: g?.groupName ?? "",
+            label: g?.displayName ?? "",
+            // GroupId — the immutable id injected into cognito:groups at approval time, so the
+            // Snitch::ApproverGroup entity matches regardless of any later group rename.
+            value: g?.id ?? "",
             description: g?.description ?? undefined,
           }))
         );
@@ -401,7 +403,7 @@ export function ApprovalPolicyPage() {
             label={modalPrincipalType.value === "GROUP" ? "Groups" : "Users"}
             description={
               modalPrincipalType.value === "GROUP"
-                ? "Cognito groups whose members can approve requests for this account."
+                ? "IAM Identity Center groups whose members can approve requests for this account."
                 : "Cognito users who can approve requests for this account."
             }
           >

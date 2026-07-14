@@ -4,13 +4,14 @@ import {
   type GroupMembership,
   ListUsersCommand,
   ListGroupMembershipsForMemberCommand,
-  DescribeGroupCommand,
 } from "@aws-sdk/client-identitystore";
 
 const REGION = process.env.AWS_REGION ?? "us-east-1";
 const IDENTITY_STORE_ID = process.env.IDC_IDENTITY_STORE_ID!;
-const ADMIN_GROUP_NAME = process.env.ADMIN_GROUP_NAME!;
-const AUDITOR_GROUP_NAME = process.env.AUDITOR_GROUP_NAME!;
+const ADMIN_GROUP_ID = process.env.ADMIN_GROUP_ID!;
+// Optional: unset ("") never matches a real GroupId, so no user receives the Auditors claim —
+// the same backward-safe default the display-name fallback used to provide.
+const AUDITOR_GROUP_ID = process.env.AUDITOR_GROUP_ID ?? "";
 
 const identitystore = new IdentitystoreClient({ region: REGION });
 
@@ -49,28 +50,19 @@ export const handler: PreTokenGenerationV2TriggerHandler = async (event) => {
     })
   );
 
-  const groupNames = await Promise.all(
-    (memberships.GroupMemberships ?? []).map(async (m: GroupMembership) => {
-      const group = await identitystore.send(
-        new DescribeGroupCommand({
-          IdentityStoreId: IDENTITY_STORE_ID,
-          GroupId: m.GroupId!,
-        })
-      );
-      return group.DisplayName ?? m.GroupId!;
-    })
-  );
+  const groupIds = (memberships.GroupMemberships ?? []).map((m: GroupMembership) => m.GroupId!);
 
-  // The literal "Admins"/"Auditors" claims are appended when the user belongs to the
-  // configured IDC group for each role, so Cognito's allow.group("Admins") /
-  // allow.groups(["Admins","Auditors"]) authorization rules resolve unchanged. A user
-  // in both IDC groups correctly receives both claims.
-  const cognitoGroups = [...groupNames];
-  if (groupNames.includes(ADMIN_GROUP_NAME)) cognitoGroups.push("Admins");
-  if (groupNames.includes(AUDITOR_GROUP_NAME)) cognitoGroups.push("Auditors");
+  // cognito:groups carries immutable IDC GroupIds (rename-safe) — approval policies key on the same
+  // GroupId as Snitch::ApproverGroup. The literal "Admins"/"Auditors" claims are appended when the
+  // user belongs to the configured IDC group for each role, so Cognito's allow.group("Admins") /
+  // allow.groups(["Admins","Auditors"]) authorization rules resolve unchanged. A user in both IDC
+  // groups correctly receives both claims.
+  const cognitoGroups = [...groupIds];
+  if (groupIds.includes(ADMIN_GROUP_ID)) cognitoGroups.push("Admins");
+  if (AUDITOR_GROUP_ID && groupIds.includes(AUDITOR_GROUP_ID)) cognitoGroups.push("Auditors");
 
   console.log(
-    JSON.stringify({ msg: "groups-resolved", ADMIN_GROUP_NAME, AUDITOR_GROUP_NAME, groupNames, cognitoGroups })
+    JSON.stringify({ msg: "groups-resolved", ADMIN_GROUP_ID, AUDITOR_GROUP_ID, groupIds, cognitoGroups })
   );
 
   event.response = {
