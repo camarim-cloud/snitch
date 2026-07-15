@@ -40,8 +40,8 @@ User → clicks "Sign out" in the app
 
 CDK reads synth-time values from environment variables only.
 
-- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`): `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_NAME` are required environment variables; `AUDITOR_GROUP_NAME` is optional (it falls back to `AWSTeamAuditors`). Define them directly in Amplify Hosting under Build settings → Environment variables for hosted deployments, or export them in your shell before running `npm run sandbox` for local sandbox work.
-- **At deploy time via CloudFormation dynamic reference**: `IDC_SAML_METADATA_URL` is referenced as `{{resolve:secretsmanager:snitch/auth-config:SecretString:IDC_SAML_METADATA_URL}}` in the SAML identity provider resource property, where CloudFormation supports this expansion.
+- **At synth time** (`amplify/backend.ts` and `amplify/cognitoAuth.ts`, via `amplify/synthEnv.ts`): `IDC_SAML_METADATA_URL`, `IDC_IDENTITY_STORE_ID`, and `ADMIN_GROUP_ID` are required environment variables; `AUDITOR_GROUP_ID` is optional (unset ⇒ no user receives the `Auditors` claim). `COGNITO_DOMAIN_PREFIX` and `APP_CALLBACK_URL` are optional in an Amplify Hosting build — they auto-derive from the reserved `AWS_APP_ID` / `AWS_BRANCH` build variables (`snitch-<branch>-<app-id>` and `https://<branch>.<app-id>.amplifyapp.com`). A local sandbox has no `AWS_APP_ID`, so `COGNITO_DOMAIN_PREFIX` is required there (without a domain prefix the Cognito login endpoint has no value); `APP_CALLBACK_URL` falls back to `http://localhost:5173`. Define them directly in Amplify Hosting under Build settings → Environment variables for hosted deployments, or export them in your shell before running `npm run sandbox` for local sandbox work.
+- `IDC_SAML_METADATA_URL` is a plain synth-time environment variable — the IDC SAML metadata URL is public information, not a secret. (It was previously read from AWS Secrets Manager `snitch/auth-config`; that secret is no longer used.)
 
 ### Managed Login Page
 
@@ -51,7 +51,7 @@ Cognito's managed login page (`managedLoginVersion: 2`) serves as both the sign-
 
 ## Step 1 — Choose a Cognito Domain Prefix
 
-Pick a globally unique prefix for the Cognito Hosted UI domain. This value will be stored in the secret as `COGNITO_DOMAIN_PREFIX`.
+Pick a globally unique prefix for the Cognito Hosted UI domain. This value is the `COGNITO_DOMAIN_PREFIX` environment variable — optional in an Amplify Hosting build (it auto-derives as `snitch-<branch>-<app-id>`), and required for a local sandbox.
 
 ```
 https://<COGNITO_DOMAIN_PREFIX>.auth.<REGION>.amazoncognito.com
@@ -100,7 +100,7 @@ The User Pool ID is not known before the first deploy, so use a placeholder Audi
    ```
    https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>
    ```
-   This goes into the secret as `IDC_SAML_METADATA_URL`.
+   Set this as the `IDC_SAML_METADATA_URL` environment variable.
 
 8. **Assign users or groups** to the application so they can authenticate.
 
@@ -111,67 +111,36 @@ The User Pool ID is not known before the first deploy, so use a placeholder Audi
 1. In the **IAM Identity Center** console, navigate to **Settings**.
 2. Under **Identity source**, copy the **Identity Store ID** (format: `d-xxxxxxxxxxxx`).
 
-This goes into the secret as `IDC_IDENTITY_STORE_ID`.
+Set this as the `IDC_IDENTITY_STORE_ID` environment variable.
 
 ---
 
-## Step 4 — Create the Secrets Manager Secret
+## Step 4 — Set the Environment Variables
 
-Create a secret at path **`snitch/auth-config`** in the same AWS account and region where you will deploy Snitch.
+Snitch reads all of its configuration from plain environment variables at CDK synth time — **no AWS Secrets Manager secret is required**. The IDC SAML metadata URL is public information, so it is just another environment variable.
 
-The secret must contain at least the following JSON field:
-
-```json
-{
-  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
-}
-```
-
-The synth-time values below must be defined in Amplify Hosting for hosted deployments, or exported in your shell before running `npm run sandbox` for local sandbox work.
-
-```json
-{
-  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
-}
-```
-
-For hosted deployments, define these values directly in Amplify Hosting under **Build settings → Environment variables**. For local sandbox runs, export them in your shell instead:
+For hosted deployments, define these under **Amplify Hosting → App settings → Environment variables**. For local sandbox runs, export them in your shell — the `scripts/set-sandbox-env.sh` convenience script does this (edit its values, then **source** it):
 
 ```bash
-export COGNITO_DOMAIN_PREFIX="snitch-auth"
-export APP_CALLBACK_URL="http://localhost:5173"
+export IDC_SAML_METADATA_URL="https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
 export IDC_IDENTITY_STORE_ID="d-xxxxxxxxxxxx"
-export ADMIN_GROUP_NAME="SnitchAdmins"
-export AUDITOR_GROUP_NAME="SnitchAuditors"
+export ADMIN_GROUP_ID="<idc-admin-group-id>"        # immutable IDC GroupId (a UUID)
+export AUDITOR_GROUP_ID="<idc-auditor-group-id>"    # optional
+export COGNITO_DOMAIN_PREFIX="snitch-auth"          # required for a local sandbox; optional in Amplify Hosting
+export APP_CALLBACK_URL="http://localhost:5173"     # optional; auto-derives in Amplify Hosting
 ```
 
-| Field | Description |
-|---|---|
-| `IDC_SAML_METADATA_URL` | SAML metadata URL copied from the IDC application in Step 2 |
-| `IDC_IDENTITY_STORE_ID` | Identity Store ID copied in Step 3 |
-| `ADMIN_GROUP_NAME` | Display name of the IDC group whose members should receive the Cognito `Admins` group claim |
-| `AUDITOR_GROUP_NAME` | Display name of the IDC group whose members should receive the Cognito `Auditors` group claim (read-only Approval History + Session Activity pages). Optional — defaults to `AWSTeamAuditors`. |
-| `COGNITO_DOMAIN_PREFIX` | The unique prefix chosen in Step 1. Can be supplied as the `COGNITO_DOMAIN_PREFIX` environment variable instead of in the secret. |
-| `APP_CALLBACK_URL` | The production URL of the deployed frontend (e.g. `https://myapp.example.com`). Use `http://localhost:5173` for local sandbox. Can be supplied as the `APP_CALLBACK_URL` environment variable instead of in the secret. |
+| Variable | Required | Description |
+|---|---|---|
+| `IDC_SAML_METADATA_URL` | Yes | SAML metadata URL copied from the IDC application in Step 2 (public, not a secret) |
+| `IDC_IDENTITY_STORE_ID` | Yes | Identity Store ID copied in Step 3 |
+| `ADMIN_GROUP_ID` | Yes | Immutable IDC **GroupId** (a UUID) whose members receive the Cognito `Admins` claim. Find it with: `aws identitystore list-groups --identity-store-id <d-xxxx> --query "Groups[?DisplayName=='<name>'].GroupId" --output text` |
+| `AUDITOR_GROUP_ID` | No | IDC GroupId whose members receive the read-only `Auditors` claim (Approval History + Session Activity). Unset ⇒ no user receives it. |
+| `COGNITO_DOMAIN_PREFIX` | Sandbox only | The unique Cognito domain prefix from Step 1. In an Amplify Hosting build it auto-derives as `snitch-<branch>-<app-id>`; required for a local sandbox. |
+| `APP_CALLBACK_URL` | No | The deployed frontend URL. In an Amplify Hosting build it auto-derives as `https://<branch>.<app-id>.amplifyapp.com`; defaults to `http://localhost:5173` for a local sandbox. |
 
-{: .warning }
-The secret path `snitch/auth-config` is hard-coded in the CDK. If `COGNITO_DOMAIN_PREFIX`, `APP_CALLBACK_URL`, `IDC_IDENTITY_STORE_ID`, or `ADMIN_GROUP_NAME` are not provided by Amplify Hosting or your shell environment, they must exist in this secret before running `npm run sandbox`.
-
-### Creating the secret via AWS CLI
-
-```bash
-aws secretsmanager create-secret \
-  --name snitch/auth-config \
-  --region <REGION> \
-  --secret-string '{
-    "IDC_SAML_METADATA_URL": "https://...",
-    "IDC_IDENTITY_STORE_ID": "d-xxxxxxxxxxxx",
-    "ADMIN_GROUP_NAME": "SnitchAdmins",
-    "AUDITOR_GROUP_NAME": "SnitchAuditors",
-    "COGNITO_DOMAIN_PREFIX": "snitch-auth",
-    "APP_CALLBACK_URL": "http://localhost:5173"
-  }'
-```
+{: .note }
+`ADMIN_GROUP_ID` / `AUDITOR_GROUP_ID` are the immutable IDC **GroupIds**, not display names — so renaming an IDC group never breaks admin or auditor access. The pre-token generation Lambda injects the matching `Admins` / `Auditors` claim into `cognito:groups` at token issue time.
 
 ---
 
@@ -209,23 +178,20 @@ After updating the Audience URI:
 2. Click **"Sign in with IDC"** and authenticate with an IDC user assigned to the application.
 3. After successful login, the top navigation should display the user's email (without the `idc_` prefix).
 4. Click **"Sign out"** — the browser should return to the Cognito managed login page, not re-authenticate automatically.
-5. For a user that belongs to the `ADMIN_GROUP_NAME` IDC group: navigate to **Privileged Policies** — the page loads.
-6. For a user that does NOT belong to `ADMIN_GROUP_NAME`: the same route shows **Access denied**.
-7. For a user that belongs to the `AUDITOR_GROUP_NAME` IDC group: navigate to **Approval History** / **Session Activity** — the pages load.
-8. For a user that does NOT belong to `AUDITOR_GROUP_NAME`: the same routes show **Access denied**.
+5. For a user in the IDC group identified by `ADMIN_GROUP_ID`: navigate to **Privileged Policies** — the page loads.
+6. For a user NOT in that group: the same route shows **Access denied**.
+7. For a user in the IDC group identified by `AUDITOR_GROUP_ID`: navigate to **Approval History** / **Session Activity** — the pages load.
+8. For a user NOT in that group: the same routes show **Access denied**.
 
 ---
 
 ## Updating the Configuration
 
-To change any value (e.g., a new admin group name or callback URL), update the secret in Secrets Manager and redeploy:
+To change any value (e.g., a different admin group or callback URL), update the environment variable — in your shell / `scripts/set-sandbox-env.sh` for a sandbox, or in Amplify Hosting → App settings → Environment variables for a hosted deployment — and redeploy:
 
 ```bash
-aws secretsmanager update-secret \
-  --secret-id snitch/auth-config \
-  --region <REGION> \
-  --secret-string '{ ... updated values ... }'
-
+export ADMIN_GROUP_ID="<new-idc-group-id>"
+source scripts/set-sandbox-env.sh
 npm run sandbox
 ```
 
@@ -235,13 +201,13 @@ npm run sandbox
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| CloudFormation fails with `Secrets Manager secret not found` | Secret doesn't exist or is in the wrong region | Create `snitch/auth-config` in the correct region (Step 4) |
+| Synthesis fails with `Environment variable ... is required for synth-time Cognito config.` | A required synth-time env var is unset | Set `IDC_SAML_METADATA_URL`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_ID` (and `COGNITO_DOMAIN_PREFIX` for a local sandbox) before deploying (Step 4) |
 | SAML login fails with `Audience URI mismatch` | Placeholder Audience URI still set | Update IDC app Audience URI to `urn:amazon:cognito:sp:<USER_POOL_ID>` (Step 5) |
 | Login redirects to IDC but fails with `User not assigned` | IDC user or group not assigned to the application | Assign the user or their group to the IDC SAML application (Step 2, step 8) |
-| Admin pages show **Access denied** for an IDC admin | `ADMIN_GROUP_NAME` in the secret doesn't match the IDC group's display name | Verify the exact group display name in IDC and update the secret |
-| Auditor pages show **Access denied** for an IDC auditor | `AUDITOR_GROUP_NAME` doesn't match the IDC group's display name, or the user hasn't re-authenticated since being added | Verify the exact group display name in IDC (set `AUDITOR_GROUP_NAME` to match), then sign out and back in to mint a fresh token |
+| Admin pages show **Access denied** for an IDC admin | `ADMIN_GROUP_ID` doesn't match the user's IDC group GroupId | Verify the group's GroupId in IDC and set `ADMIN_GROUP_ID` to match, then redeploy |
+| Auditor pages show **Access denied** for an IDC auditor | `AUDITOR_GROUP_ID` doesn't match the group's GroupId, or the user hasn't re-authenticated since being added | Verify the group's GroupId in IDC (set `AUDITOR_GROUP_ID` to match), then sign out and back in to mint a fresh token |
 | `getMyIDCUser` returns `null` after login | IDC `UserName` attribute doesn't match the user's email | Verify the IDC attribute mapping in Step 2 maps `email` to `${user:email}` |
-| `PreTokenGeneration failed: not authorized to perform secretsmanager:GetSecretValue` | Pre-token Lambda was deployed before the IAM policy or env vars were applied | Run `npm run sandbox` to redeploy — `IDC_IDENTITY_STORE_ID` and `ADMIN_GROUP_NAME` are now embedded at synth time, no IAM permission needed |
+| Admin/Auditor claim missing right after adding a user to the IDC group | The user's token predates the group change | Sign out and back in — `preTokenGenerationHandler` mints the `Admins`/`Auditors` claim from `ADMIN_GROUP_ID`/`AUDITOR_GROUP_ID` at token issue time |
 | Admin pages show **Access denied** after login even for admin users | Pre-token generation Lambda didn't inject IDC groups (e.g., `IDC_IDENTITY_STORE_ID` env var was empty on first deploy) | Run `npm run sandbox` to redeploy the Lambda with the correct env vars, then sign out and back in to get a fresh token |
 | Managed login page shows **"Login pages unavailable"** | `CfnManagedLoginBranding` resource not yet deployed, or `managedLoginVersion: 2` not set on the domain | Run `npm run sandbox` — CDK provisions both the domain and the branding resource automatically |
 | App stays on spinner forever after Cognito redirects back with `?code=` | PKCE state was not stored (e.g., previous code used `window.location.href` directly to Cognito, bypassing Amplify) | Ensure `signInWithRedirect()` is always called to initiate the flow — never redirect to the Cognito login URL directly |

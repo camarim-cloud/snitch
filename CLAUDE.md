@@ -286,7 +286,8 @@ permit (
 
 | Variable | Used by |
 |---|---|
-| `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` — plain string set at CDK synth time from `snitch/auth-config` |
+| `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` — plain string set at CDK synth time from the `IDC_IDENTITY_STORE_ID` env var |
+| `IDC_SAML_METADATA_URL` | `cognitoAuth.ts` — public IdC SAML metadata URL fed to the SAML IdP `MetadataURL`; plain synth-time env var (replaced the AWS Secrets Manager `snitch/auth-config` secret, now removed) |
 | `ADMIN_GROUP_ID` | `preTokenGenerationHandler` — immutable IDC **GroupId** whose members receive the `Admins` claim; plain string set at CDK synth time. Injected into `cognito:groups`, so a rename of the group never breaks admin access |
 | `AUDITOR_GROUP_ID` | `preTokenGenerationHandler` — immutable IDC **GroupId** whose members receive the `Auditors` claim; synth-time env var, **optional** (unset ⇒ no user gets the claim, the backward-safe default) |
 | `AVP_POLICY_STORE_ID` | All AVP-touching handlers (create/update/delete policies, evaluate access, approve/reject/listPending) |
@@ -296,6 +297,8 @@ permit (
 | `APP_SETTINGS_TABLE_NAME` | `getSettingsHandler`, `updateSettingsHandler`, `getCloudTrailLogsHandler`, `requestAccessHandler`, `removePermissionSetHandler`, `storeApprovalTokenHandler` |
 | `NOTIFICATIONS_TOPIC_ARN` | Notification publishers (`requestAccessHandler`, `removePermissionSetHandler`, `storeApprovalTokenHandler`); also read-only on `getSettingsHandler` to surface the ARN |
 | `APP_CALLBACK_URL` | `storeApprovalTokenHandler` — builds the SNS approval email's link to the Approve Requests page |
+
+`COGNITO_DOMAIN_PREFIX` and `APP_CALLBACK_URL` are optional synth-time values resolved in `amplify/synthEnv.ts`: in an Amplify Hosting build they auto-derive from the reserved `AWS_APP_ID`/`AWS_BRANCH` vars (`snitch-<branch>-<app-id>` and `https://<branch>.<app-id>.amplifyapp.com`); a local sandbox has no app id, so `COGNITO_DOMAIN_PREFIX` is required there and `APP_CALLBACK_URL` defaults to `http://localhost:5173`.
 
 ### IAM Permissions
 
