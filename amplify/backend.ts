@@ -46,17 +46,10 @@ import {
 import { getSettingsFunction, updateSettingsFunction } from "./functions/settings/resource";
 import { slackInteractiveFunction } from "./functions/slackInteractions/resource";
 import { preTokenGenerationFunction } from "./functions/auth/resource";
+import { resolveCognitoDomainPrefix, resolveAppCallbackUrl } from "./synthEnv";
 
-function requireSynthEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Environment variable ${name} is required for synth-time Cognito config.`);
-  }
-  return value;
-}
-
-const outputDomainPrefix = requireSynthEnv("COGNITO_DOMAIN_PREFIX");
-const outputCallbackUrl = requireSynthEnv("APP_CALLBACK_URL");
+const outputDomainPrefix = resolveCognitoDomainPrefix(process.env);
+const outputCallbackUrl = resolveAppCallbackUrl(process.env);
 
 const backend = defineBackend({
   auth,

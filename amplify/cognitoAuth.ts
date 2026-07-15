@@ -8,22 +8,18 @@ import {
 } from "aws-cdk-lib/aws-cognito";
 import { Effect, PolicyStatement } from "aws-cdk-lib/aws-iam";
 import { Function as LambdaFunction } from "aws-cdk-lib/aws-lambda";
-import { SecretValue, Stack } from "aws-cdk-lib";
+import { Stack } from "aws-cdk-lib";
+import { requireSynthEnv, resolveCognitoDomainPrefix, resolveAppCallbackUrl } from "./synthEnv";
 
-function requireSynthEnv(name: string, fallback?: string): string {
-  const value = process.env[name] ?? fallback;
-  if (!value) {
-    throw new Error(`Environment variable ${name} is required for synth-time Cognito config.`);
-  }
-  return value;
-}
-
-const outputDomainPrefix = requireSynthEnv("COGNITO_DOMAIN_PREFIX");
-const outputCallbackUrl = requireSynthEnv("APP_CALLBACK_URL");
-const outputIdentityStoreId = requireSynthEnv("IDC_IDENTITY_STORE_ID");
+const outputDomainPrefix = resolveCognitoDomainPrefix(process.env);
+const outputCallbackUrl = resolveAppCallbackUrl(process.env);
+const outputIdentityStoreId = requireSynthEnv(process.env, "IDC_IDENTITY_STORE_ID");
+// Public IAM Identity Center SAML metadata URL. Plain synth-time env var (was AWS Secrets
+// Manager snitch/auth-config#IDC_SAML_METADATA_URL) — mirrors ADMIN_GROUP_ID.
+const idcSamlMetadataUrl = requireSynthEnv(process.env, "IDC_SAML_METADATA_URL");
 // Immutable IDC GroupId (a UUID), not a display name — so renaming the IDC group never breaks the
 // Admins claim. Required.
-const outputAdminGroupId = requireSynthEnv("ADMIN_GROUP_ID");
+const outputAdminGroupId = requireSynthEnv(process.env, "ADMIN_GROUP_ID");
 // Optional: no GroupId default is meaningful, so pass through empty rather than a placeholder. The
 // token handler only appends the Auditors claim when this id is set and matches a membership, so
 // unset = nobody gets Auditors (the backward-safe behavior the old display-name fallback provided).
@@ -44,15 +40,11 @@ export function setupCognitoAuth({
 }: CognitoAuthParams): void {
   const authStack = Stack.of(userPool);
 
-  const metadataUrl = SecretValue.secretsManager("snitch/auth-config", {
-    jsonField: "IDC_SAML_METADATA_URL",
-  }).unsafeUnwrap();
-
   const samlProvider = new CfnUserPoolIdentityProvider(authStack, "IDCSAMLProvider", {
     userPoolId: userPool.userPoolId,
     providerName: "IDC",
     providerType: "SAML",
-    providerDetails: { MetadataURL: metadataUrl, IDPSignout: "false" },
+    providerDetails: { MetadataURL: idcSamlMetadataUrl, IDPSignout: "false" },
     attributeMapping: { email: "email" },
   });
 

@@ -89,21 +89,21 @@ Snitch uses IAM Identity Center for sign-in. Before running `npm run sandbox` yo
 
 1. Register a custom application in IAM Identity Center and note the metadata URL.
 2. Note your Identity Store ID.
-3. Create an AWS Secrets Manager secret at `snitch/auth-config` containing at least:
+3. Note the immutable **GroupId** (a UUID) of the IDC group whose members should be admins (and, optionally, of an auditor group).
 
-```json
-{
-  "IDC_SAML_METADATA_URL": "https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>"
-}
-```
+Provide the synth-time values in Amplify Hosting under Build settings → Environment variables (or export them in your shell for a local sandbox). **No AWS Secrets Manager secret is required** — the SAML metadata URL is public.
 
-Define the required synth-time values in Amplify Hosting under Build settings → Environment variables:
+Required:
 
-- `COGNITO_DOMAIN_PREFIX` (for example `snitch-auth`)
-- `APP_CALLBACK_URL` (for example `http://localhost:5173` for local sandbox or your deployed frontend URL)
+- `IDC_SAML_METADATA_URL` (the SAML metadata URL from the IDC application)
 - `IDC_IDENTITY_STORE_ID` (your Identity Store ID)
-- `ADMIN_GROUP_NAME` (the IDC admin group display name)
-- `AUDITOR_GROUP_NAME` (the IDC auditor group display name; defaults to `AWSTeamAuditors` if unset)
+- `ADMIN_GROUP_ID` (the immutable IDC GroupId whose members receive the `Admins` claim)
+
+Optional:
+
+- `AUDITOR_GROUP_ID` (the IDC GroupId whose members receive the read-only `Auditors` claim; unset ⇒ no auditors)
+- `COGNITO_DOMAIN_PREFIX` — auto-derived as `snitch-<branch>-<app-id>` in an Amplify Hosting build; **required for a local sandbox** (no Amplify app id to derive from)
+- `APP_CALLBACK_URL` — auto-derived as `https://<branch>.<app-id>.amplifyapp.com` in Amplify Hosting, or `http://localhost:5173` for a local sandbox
 
 For local sandbox runs, set the same values in your shell before `npx ampx sandbox`. The convenience script `scripts/set-sandbox-env.sh` does this — edit its values, then **source** it (do not execute it, or the exports won't persist):
 
@@ -116,7 +116,7 @@ See the full step-by-step guide in [docs/pages/idc-saml-setup.md](docs/pages/idc
 ### Deploy backend sandbox
 
 ```bash
-source scripts/set-sandbox-env.sh   # sets the four required synth-time env vars
+source scripts/set-sandbox-env.sh   # exports the required synth-time env vars
 npx ampx sandbox
 ```
 
