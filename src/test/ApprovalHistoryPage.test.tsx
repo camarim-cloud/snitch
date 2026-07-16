@@ -19,6 +19,7 @@ vi.mock("aws-amplify/data", () => ({
 vi.mock("../../amplify_outputs.json", () => ({ default: {} }));
 
 import { ApprovalHistoryPage } from "../pages/ApprovalHistoryPage";
+import { formatDateTime } from "@/utils/formatDateTime";
 
 const APPROVED = {
   id: "req-1",
@@ -48,6 +49,7 @@ const REJECTED_LEGACY = {
   ...APPROVED,
   id: "req-2",
   idcUserDisplayName: "Bob",
+  idcUserEmail: "bob@example.com",
   status: "REJECTED",
   decidedAt: "",
   updatedAt: "2024-01-04T09:00:00Z",
@@ -57,6 +59,7 @@ const NO_APPROVAL = {
   ...APPROVED,
   id: "req-3",
   idcUserDisplayName: "Carol",
+  idcUserEmail: "carol@example.com",
   requiresApproval: false,
 };
 
@@ -73,9 +76,11 @@ describe("ApprovalHistoryPage", () => {
     });
     render(<ApprovalHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Alice")).toBeInTheDocument());
-    expect(screen.getByText("Bob")).toBeInTheDocument();
-    expect(screen.queryByText("Carol")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("alice@example.com")).toBeInTheDocument()
+    );
+    expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("carol@example.com")).not.toBeInTheDocument();
   });
 
   it("shows decidedAt, falling back to updatedAt for legacy records", async () => {
@@ -85,11 +90,17 @@ describe("ApprovalHistoryPage", () => {
     });
     render(<ApprovalHistoryPage />);
 
-    await waitFor(() => expect(screen.getByText("Alice")).toBeInTheDocument());
-    // Alice: durable decidedAt is shown.
-    expect(screen.getByText("2024-01-02T11:00:00Z")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("alice@example.com")).toBeInTheDocument()
+    );
+    // Alice: durable decidedAt is shown (rendered in local time).
+    expect(
+      screen.getByText(formatDateTime("2024-01-02T11:00:00Z"))
+    ).toBeInTheDocument();
     // Bob: no decidedAt → falls back to updatedAt.
-    expect(screen.getByText("2024-01-04T09:00:00Z")).toBeInTheDocument();
+    expect(
+      screen.getByText(formatDateTime("2024-01-04T09:00:00Z"))
+    ).toBeInTheDocument();
   });
 
   it("shows an error alert when the query fails", async () => {
@@ -109,7 +120,7 @@ describe("ApprovalHistoryPage", () => {
       errors: undefined,
     });
     render(<ApprovalHistoryPage />);
-    await waitFor(() => screen.getByText("Alice"));
+    await waitFor(() => screen.getByText("alice@example.com"));
 
     await userEvent.click(screen.getAllByRole("radio")[0]);
     await userEvent.click(screen.getByRole("button", { name: /view details/i }));

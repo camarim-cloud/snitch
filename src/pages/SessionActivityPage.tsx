@@ -4,6 +4,7 @@ import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { formatDuration } from "@/utils/duration";
+import { formatDateTime } from "@/utils/formatDateTime";
 import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 import { type AccessRequestRow, toRows } from "@/utils/accessRequestRow";
 import { RequestDetailsModal } from "@/components/RequestDetailsModal";
@@ -121,8 +122,8 @@ export function SessionActivityPage() {
             {
               id: "user",
               header: "User",
-              cell: (r) => r.userLabel,
-              sortingField: "userLabel",
+              cell: (r) => r.idcUserEmail || r.userLabel,
+              sortingField: "idcUserEmail",
             },
             {
               id: "accountId",
@@ -153,12 +154,12 @@ export function SessionActivityPage() {
             {
               id: "activatedAt",
               header: "Activated at",
-              cell: (r) => r.activatedAt || "—",
+              cell: (r) => formatDateTime(r.activatedAt) || "—",
             },
             {
               id: "deactivatedAt",
               header: "Deactivated at",
-              cell: (r) => r.deactivatedAt || "—",
+              cell: (r) => formatDateTime(r.deactivatedAt) || "—",
             },
           ]}
           filter={

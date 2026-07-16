@@ -3,6 +3,7 @@ import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
 import { useCollection } from "@cloudscape-design/collection-hooks";
+import { formatDateTime } from "@/utils/formatDateTime";
 import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 import { type AccessRequestRow, toRows } from "@/utils/accessRequestRow";
 import { RequestDetailsModal } from "@/components/RequestDetailsModal";
@@ -128,8 +129,8 @@ export function ApprovalHistoryPage() {
             {
               id: "user",
               header: "User",
-              cell: (r) => r.userLabel,
-              sortingField: "userLabel",
+              cell: (r) => r.idcUserEmail || r.userLabel,
+              sortingField: "idcUserEmail",
             },
             {
               id: "accountId",
@@ -164,12 +165,12 @@ export function ApprovalHistoryPage() {
             {
               id: "decidedAt",
               header: "Decided at",
-              cell: (r) => r.decidedAt || r.updatedAt || "—",
+              cell: (r) => formatDateTime(r.decidedAt || r.updatedAt) || "—",
             },
             {
               id: "createdAt",
               header: "Requested at",
-              cell: (r) => r.createdAt,
+              cell: (r) => formatDateTime(r.createdAt),
             },
           ]}
           filter={

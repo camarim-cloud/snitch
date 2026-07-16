@@ -4,6 +4,7 @@ import type { Schema } from "../../amplify/data/resource";
 import type { SelectProps } from "@cloudscape-design/components/select";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { formatDuration } from "@/utils/duration";
+import { formatDateTime } from "@/utils/formatDateTime";
 import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 import { type AccessRequestRow, toRows } from "@/utils/accessRequestRow";
 import { RequestDetailsModal } from "@/components/RequestDetailsModal";
@@ -179,8 +180,8 @@ export function ElevatedAccessPage() {
             {
               id: "user",
               header: "User",
-              cell: (r) => r.userLabel,
-              sortingField: "userLabel",
+              cell: (r) => r.idcUserEmail || r.userLabel,
+              sortingField: "idcUserEmail",
             },
             {
               id: "accountId",
@@ -211,7 +212,7 @@ export function ElevatedAccessPage() {
             {
               id: "createdAt",
               header: "Requested at",
-              cell: (r) => r.createdAt,
+              cell: (r) => formatDateTime(r.createdAt),
             },
             {
               id: "revokeComment",
@@ -320,7 +321,7 @@ export function ElevatedAccessPage() {
                   permission removal for:
                 </p>
                 <p>
-                  <strong>User:</strong> {selected.userLabel}
+                  <strong>User:</strong> {selected.idcUserEmail || selected.userLabel}
                   <br />
                   <strong>Account:</strong> {selected.accountId}
                   <br />
@@ -328,7 +329,7 @@ export function ElevatedAccessPage() {
                   <br />
                   <strong>Duration:</strong> {formatDuration(selected.durationMinutes)}
                   <br />
-                  <strong>Requested at:</strong> {selected.createdAt}
+                  <strong>Requested at:</strong> {formatDateTime(selected.createdAt)}
                 </p>
                 <p>This action cannot be undone.</p>
               </TextContent>
