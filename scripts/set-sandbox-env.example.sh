@@ -41,7 +41,7 @@ export IDC_IDENTITY_STORE_ID="${IDC_IDENTITY_STORE_ID:-d-90676116fd}"
 # docs/pages/idc-saml-setup.md). Format:
 #   https://<idc-instance>.awsapps.com/start/saml/metadata/<app-id>
 # Previously stored in AWS Secrets Manager (snitch/auth-config); now a plain env var.
-export IDC_SAML_METADATA_URL="${IDC_SAML_METADATA_URL:-https://REPLACE_ME.awsapps.com/start/saml/metadata/REPLACE_ME}"
+export IDC_SAML_METADATA_URL="${IDC_SAML_METADATA_URL:-https://portal.sso.us-east-2.amazonaws.com/saml/metadata/OTg1NTM5NzgxMDIyX2lucy02Njg0OGU2MDVhYmQ3MjI0}"
 
 # GroupId of the IDC group whose members receive the Cognito "Admins" claim (gates admin-only
 # pages). Use the immutable GroupId (a UUID), not the display name, so renaming the group can't

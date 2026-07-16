@@ -31,3 +31,5 @@ amplifyconfiguration.dart
 coverage/
 
 .DS_Store
+
+scripts/set-sandbox-env.sh
