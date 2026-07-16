@@ -15,100 +15,46 @@ nav_order: 4
 
 ---
 
-## Overview
+## What It Does
 
-A **Privileged Policy** grants an IAM Identity Center (IDC) principal — either a user or a group — the ability to request temporary access to one or more AWS accounts and/or Organizational Units (OUs) using a specific Permission Set.
+A **Privileged Policy** is the rule that says *who* may request *what* access. Each policy grants an IAM Identity Center (IDC) user or group the ability to request temporary access to one or more AWS accounts and/or Organizational Units (OUs) using a specific **Permission Set**.
 
-Each policy is stored in two places:
-- **DynamoDB** (`PrivilegedPolicy` table) — application metadata
-- **AWS Verified Permissions** — the Cedar `permit` statement (authoritative for access decisions)
+Privileged Policies never grant standing access on their own — they define the boundaries of what a person is *allowed to request*. Actual access is always time-boxed and granted through an [Access Request]({% link pages/access-requests.md %}).
 
----
-
-## Policy Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | string | UUID (auto-generated) |
-| `principalType` | `USER` \| `GROUP` | IDC user or IDC group |
-| `principalId` | string | IDC user/group ID |
-| `principalDisplayName` | string | Human-readable label (denormalized) |
-| `permissionSetArn` | string | The Permission Set ARN to assign |
-| `permissionSetName` | string | Display name (denormalized) |
-| `accountIds` | string[] | Allowed AWS account IDs |
-| `ouIds` | string[] | Allowed Organizational Unit IDs |
-| `maxDurationMinutes` | number | Maximum request duration in minutes |
-| `requiresApproval` | boolean | Whether access requests require an approver |
-| `avpPolicyId` | string | Foreign key to the Cedar policy in AVP |
+Managing Privileged Policies is an **admin-only** capability.
 
 ---
 
-## Conflict Enforcement
+## Creating a Policy
 
-Only one policy is allowed per `(principal, resource)` combination. `policyConflictChecker.ts` is called at the top of both `createPrivilegedPolicyHandler` and `updatePrivilegedPolicyHandler` — before any AVP or DDB writes — and scans for existing policies with the same `principalId` and overlapping `accountIds`/`ouIds`.
+When an admin creates a policy, they choose:
 
-The frontend (`PrivilegedPoliciesPage.tsx → validate()`) performs the same check against locally loaded state for immediate UX feedback, but the backend check is authoritative.
-
----
-
-## Cedar Policy Shape
-
-`buildCedarPolicy` in `amplify/functions/verifiedPermissions/cedarPolicyBuilder.ts` generates the Cedar `permit` statement:
-
-```cedar
-permit (
-  principal == Snitch::User::"abc-123",
-  action == Snitch::Action::"assume",
-  resource
-) when {
-  (
-    resource in Snitch::Account::"111111111111" ||
-    resource in Snitch::OU::"ou-root-xxxx"
-  ) &&
-  ["arn:aws:sso:::permissionSet/ps-1"].contains(context.permissionSetArn)
-};
-```
-
-For group-scoped policies, `principal == Snitch::User::"..."` is replaced with `principal in Snitch::Group::"..."`.
+- **Principal** — the IDC user or group the policy applies to.
+- **Permission Set** — the AWS permission set the principal may assume.
+- **Accounts and/or OUs** — where the access applies. Selecting an OU covers the accounts within it.
+- **Maximum duration** — the longest a request against this policy may last. Requests may ask for less, never more.
+- **Requires approval** — whether an approver must sign off before access is granted (see the [Approval Workflow]({% link pages/approval-workflow.md %})).
 
 ---
 
-## CRUD Operations
+## One Policy per Principal and Resource
 
-All mutations are AppSync custom resolvers backed by Lambda handlers in `amplify/functions/verifiedPermissions/`.
-
-| Operation | Handler | Write Order |
-|---|---|---|
-| Create | `createPrivilegedPolicyHandler.ts` | AVP first → DynamoDB |
-| Update | `updatePrivilegedPolicyHandler.ts` | DynamoDB first → AVP |
-| Delete | `deletePrivilegedPolicyHandler.ts` | DynamoDB first → AVP |
-
-The compensating-transaction ordering ensures that on partial failure, the rollback target is always reachable.
+Snitch allows only **one** policy for a given principal on a given account or OU. If you try to create a second policy that overlaps an existing one for the same user or group, Snitch blocks it and tells you which policy already covers that resource. This keeps each principal's access to any account unambiguous.
 
 ---
 
-## Max Duration
+## Maximum Duration
 
-`maxDurationMinutes` stores the total duration as a plain integer (minutes). The UI uses a `DatePicker` + `TimeInput` pair where the selected date/time represents the future expiry point. The helpers in `src/utils/duration.ts` convert between the two representations:
-
-- `maxDurationToMinutes(date, time)` → total minutes (used on save)
-- `minutesToMaxDuration(minutes)` → `{ date, time }` relative to today (used to populate the edit form)
-- `formatDuration(minutes)` → human-readable label: `45min`, `8h 30min`, `2d 8h`
+Each policy sets a maximum access duration. In the form you pick a future date and time, and Snitch stores the resulting length. When a user requests access, their chosen duration is checked against this maximum before the request is accepted. Durations are shown throughout the app in a readable form such as `45min`, `8h 30min`, or `2d 8h`.
 
 ---
 
 ## Requires Approval
 
-Setting `requiresApproval: true` on a policy activates the approval gate for all access requests targeting that policy's `(accountId, permissionSetArn)` pair:
+Turning on **Requires approval** for a policy means any request against it pauses for sign-off before access is granted:
 
-1. `evaluateMyAccess` returns `requiresApproval: true` for the pair.
-2. The Request Access form shows an info alert.
-3. On submission, the request is created with `status: "PENDING_APPROVAL"` and the Step Function pauses at the `WaitForApproval` state.
+1. The Request Access form warns the user that approval is required.
+2. On submission the request waits in a *Pending approval* state.
+3. An authorized approver approves or rejects it (or it times out after 24 hours).
 
-**Who can approve** is configured separately in the [Approval Workflow]({% link pages/approval-workflow.md %}) section.
-
----
-
-## Access Control
-
-The `PrivilegedPolicy` model is restricted to the **`Admins`** Cognito group. Non-admin users cannot list, create, update, or delete policies.
+*Who* can approve is configured separately — see the [Approval Workflow]({% link pages/approval-workflow.md %}).

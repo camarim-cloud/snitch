@@ -15,131 +15,40 @@ nav_order: 6
 
 ---
 
-## Overview
+## What It Does
 
-Each `PrivilegedPolicy` can optionally require approval before access is granted via the `requiresApproval` boolean field. **Who can approve** is configured separately in the `ApprovalPolicy` model, which maps a Cognito user or group to a specific AWS account with required Permission Set conditions.
+Some access is sensitive enough that it should not be granted automatically. When a [Privileged Policy]({% link pages/privileged-policies.md %}) has **Requires approval** turned on, every request against it pauses until an authorized approver signs off — or it times out after 24 hours and expires on its own.
 
----
-
-## Approval Policy
-
-An `ApprovalPolicy` record defines a single approver for a specific AWS account. It is backed by a Cedar `approve` policy in AVP and lives in its own DynamoDB table.
-
-### Fields
-
-| Field | Type | Purpose |
-|---|---|---|
-| `accountId` | string | The AWS account the approver can act on (PK hash key) |
-| `principalKey` | string | Composite sort key: `"${principalType}#${principalId}"` |
-| `accountName` | string | Display name (denormalized) |
-| `principalType` | `USER` \| `GROUP` | Cognito user or Cognito group |
-| `principalId` | string | Cognito username (USER) or Cognito group name (GROUP) |
-| `principalDisplayName` | string | Human-readable label |
-| `permissionSetArns` | string[] | Permission set ARNs in the Cedar `when` clause (≥1 required) |
-| `permissionSetNames` | string[] | Display names (parallel array, denormalized) |
-| `avpPolicyId` | string | Foreign key to the Cedar `approve` policy in AVP |
-
-The composite primary key `[accountId, principalKey]` enables O(1) duplicate checks with no GSI or scan.
+This adds a human checkpoint without slowing down the rest of the flow: unapproved requests never grant access, and approved ones continue straight through to activation.
 
 ---
 
-## Cedar Policy Shape
+## Configuring Who Can Approve
 
-`buildApprovalCedarPolicy` in `amplify/functions/verifiedPermissions/buildApprovalCedarPolicy.ts` generates the Cedar `permit` statement.
+*Whether* approval is needed lives on the Privileged Policy. *Who* may approve is configured separately by an admin on the **Approval Policy** page.
 
-**USER approver:**
-
-```cedar
-permit (
-  principal == Snitch::Approver::"alice",
-  action == Snitch::Action::"approve",
-  resource == Snitch::Account::"111111111111"
-) when {
-  ["arn:aws:sso:::permissionSet/ps-1", "arn:aws:sso:::permissionSet/ps-2"].contains(context.permissionSetArn)
-};
-```
-
-**GROUP approver:**
-
-```cedar
-permit (
-  principal in Snitch::ApproverGroup::"Approvers",
-  action == Snitch::Action::"approve",
-  resource == Snitch::Account::"111111111111"
-) when {
-  ["arn:aws:sso:::permissionSet/ps-1"].contains(context.permissionSetArn)
-};
-```
+Each approval policy grants one approver — an individual user or a group — the ability to approve requests for a specific **AWS account**, limited to one or more chosen **permission sets**. An admin can add as many approvers per account as needed. Approval policies are created and removed on the Approval Policy page (to change one, delete it and create a new one).
 
 ---
 
-## Workflow: Step Functions States
+## Approving a Request
 
-```
-CheckApproval (Choice)
-  requiresApproval = true  →  WaitForApproval (waitForTaskToken, HeartbeatSeconds: 86400)
-  default                  →  CheckStartTime
+Anyone configured as an approver can open the **Approve Requests** page — it is not limited to admins. The page lists the requests they are authorized to act on, and each can be **approved** or **rejected** (optionally with a comment).
 
-WaitForApproval
-  SendTaskSuccess           →  CheckStartTime (approved)
-  "RequestRejected"         →  RejectionHandled (Pass — DDB already REJECTED)
-  States.HeartbeatTimeout   →  SetStatusExpired (DDB SDK state, no Lambda)
-  States.ALL                →  SetStatusFailed
-```
+- Approving resumes the request, which then proceeds to activation.
+- Rejecting ends the request as *Rejected* — no access is granted.
+- A request nobody acts on within 24 hours expires automatically.
 
-The 24-hour heartbeat (`HeartbeatSeconds: 86400`) acts as a timeout — if no approver acts within 24 hours, the request expires automatically.
+{: .note }
+Approvers cannot approve or reject their **own** requests — a request always needs a second person to sign off.
 
 ---
 
 ## Approval Notifications
 
-When a request enters `PENDING_APPROVAL`, `storeApprovalTokenHandler` stores the Step Functions task token and notifies approvers through up to two channels (both best-effort — a delivery failure never blocks the workflow):
+When a request is waiting for approval, Snitch can alert approvers so they don't have to watch the page:
 
-- **Slack** — an interactive Block Kit message with **Approve** / **Reject** buttons is posted to the configured channel. Clicking a button hits a public Lambda Function URL that verifies the Slack HMAC signature, resolves the clicker's Slack email → Cognito identity, runs the same AVP `IsAuthorized` check, and invokes `approveRequestHandler`/`rejectRequestHandler`.
-- **Amazon SNS** — when `snsApprovalNotificationsEnabled` is on, an email is published to the app-managed topic. Because SNS cannot identify the recipient who clicks a link, it carries **no** one-click actions; instead it links to the in-app **Approve Requests** page (`<APP_CALLBACK_URL>#/approve-requests`), where the approver signs in and acts with full authorization.
+- **Slack** — an interactive message with **Approve** / **Reject** buttons is posted to the configured channel, so approvers can act without leaving Slack.
+- **Email (Amazon SNS)** — a notification links back to the in-app Approve Requests page, where the approver signs in and acts.
 
-See the [Notifications]({% link pages/notifications.md %}) page for the full delivery model and Settings toggles.
-
----
-
-## Approve Requests Page
-
-Any authenticated user can access the `ApproveRequestsPage`. Access is controlled by AVP `IsAuthorized`, not by Cognito group membership. This means:
-
-- Non-admin users configured as approvers can view and act on pending requests for their authorized accounts.
-- Admins with no `ApprovalPolicy` entries will see an empty list.
-
-The route has **no `AdminGuard`**.
-
-### Authorization Check
-
-`listPendingApprovals`, `approveRequest`, and `rejectRequest` all call AVP `IsAuthorized` with:
-
-- **Principal:** `Snitch::Approver::"<cognito-username>"`
-- **Action:** `Snitch::Action::"approve"`
-- **Resource:** `Snitch::Account::"<accountId>"`
-- **Context:** `{ permissionSetArn: "<arn>" }`
-- **Entities:** caller's Cognito groups injected as `Snitch::ApproverGroup` parents
-
----
-
-## Lambda Handlers
-
-| Handler | Stack | Purpose |
-|---|---|---|
-| `storeApprovalTokenHandler.ts` | AccessRequestWorkflow | Called by `WaitForApproval`; stores task token, sets `PENDING_APPROVAL`, and sends Slack + SNS approval notifications |
-| `approveRequestHandler.ts` | data | Guards self-approval; checks AVP `IsAuthorized`; calls `SendTaskSuccess` |
-| `rejectRequestHandler.ts` | data | Guards self-rejection; checks AVP `IsAuthorized`; sets `REJECTED`, calls `SendTaskFailure` |
-| `listPendingApprovalsHandler.ts` | data | Scans `PENDING_APPROVAL` requests; filters by AVP per `(accountId, permissionSetArn)` |
-| `createApprovalPolicyHandler.ts` | data | Creates `ApprovalPolicy` DDB record + AVP `approve` policy (AVP first) |
-| `deleteApprovalPolicyHandler.ts` | data | Deletes `ApprovalPolicy` DDB record + AVP `approve` policy (DDB first) |
-
----
-
-## Managing Approval Policies
-
-Approval policies are managed via the **Approval Policy** page (admin-only). Operations are delete-and-recreate — there is no update mutation. The UI provides:
-
-- A list of configured approvers per account
-- A form to add a new approver with permission set conditions
-- A delete action that removes the DDB record and AVP policy atomically
+Both channels are configured on the [Settings]({% link pages/settings.md %}) page. See [Notifications]({% link pages/settings.md %}#notifications) for the full delivery model.

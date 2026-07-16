@@ -78,7 +78,8 @@ snitch/
 │   ├── utils/
 │   │   ├── duration.ts              # Shared: todayDateStr, minutesToMaxDuration, maxDurationToMinutes, formatDuration
 │   │   ├── accessRequestStatus.ts   # Shared: accessRequestStatusType — maps request status string → Cloudscape StatusIndicator type
-│   │   └── accessRequestRow.ts      # Shared: AccessRequestRow type + toRow/toRows — flattened projection of AccessRequestItem
+│   │   ├── accessRequestRow.ts      # Shared: AccessRequestRow type + toRow/toRows — flattened projection of AccessRequestItem
+│   │   └── formatDateTime.ts        # Shared: formatDateTime — renders an ISO string in the viewer's local timezone/locale ("" for empty/invalid)
 │   ├── types/                  # Shared TypeScript types
 │   ├── pages/
 │   │   ├── PrivilegedPoliciesPage.tsx  # Admin CRUD for privileged policies (requiresApproval toggle only)
@@ -691,3 +692,9 @@ These are distinct from `startTime` (the user-requested scheduled start) and `du
 ### `accessRequestStatusType` — shared status → indicator type mapping
 
 `src/utils/accessRequestStatus.ts` exports `accessRequestStatusType(status)` which maps an `AccessRequestItem` status string to a Cloudscape `StatusIndicatorProps.Type`. Both `RequestAccessPage` and `ElevatedAccessPage` import this instead of defining their own switch.
+
+### `formatDateTime` — local-timezone datetime rendering in audit tables
+
+`src/utils/formatDateTime.ts` exports `formatDateTime(iso)`, which renders an ISO 8601 timestamp (DynamoDB stores UTC) in the **viewer's browser timezone and locale** via `toLocaleString`, returning `""` for empty/invalid input so callers keep their own `—` fallback (`formatDateTime(r.activatedAt) || "—"`). Every datetime cell in the audit surfaces — Elevated Access, Approval History, Session Activity, and `RequestDetailsModal` (Requested/Decided/Activated/Deactivated at, plus the CloudTrail Event Time column) — is passed through it instead of showing the raw UTC ISO string.
+
+The same three audit pages and the modal also show the requester's **email** (`idcUserEmail`, falling back to the display name) in the User column and modal header rather than the display name alone, since the email matches the CloudTrail identity.

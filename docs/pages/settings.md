@@ -1,10 +1,11 @@
 ---
 title: Settings
 layout: default
-nav_order: 9
+parent: Admin Features
+nav_order: 2
 ---
 
-# Settings (Admin)
+# Settings
 {: .no_toc }
 
 ## Table of Contents
@@ -15,97 +16,59 @@ nav_order: 9
 
 ---
 
-## Overview
+## What It Does
 
-The **Settings** page (admin-only) lets administrators configure application-level settings, grouped into three cards:
+The **Settings** page (admin-only) is where administrators configure application-level options, grouped into three cards:
 
-- **CloudTrail Audit Logs** — the CloudWatch log group where CloudTrail delivers audit events (drives the [Elevated Access]({% link pages/elevated-access.md %}) audit trail).
+- **CloudTrail Audit Logs** — the CloudWatch log group that powers the audit trail.
 - **Slack Integration** — the Slack app credentials used for approval messages and notifications.
-- **Access-Request Notifications** — per-channel toggles for [notifications]({% link pages/notifications.md %}) and the read-only SNS topic ARN.
+- **Access-Request Notifications** — the per-channel toggles for Slack and email alerts.
 
 ---
 
-## Storage Model
+## CloudTrail Audit Logs
 
-Settings are stored in `AppSettingsTable`, a CDK-managed DynamoDB table with `settingKey: STRING` as the partition key. A single record with `settingKey: "global"` holds all settings fields.
+To enable the audit trail on the [Elevated Access]({% link pages/elevated-access.md %}) and [Session Activity]({% link pages/session-activity.md %}) pages:
 
-There is no pagination or list operation — `getAppSettings` always reads the `settingKey: "global"` item, and `updateAppSettings` always **partially** overwrites it (only the arguments actually provided are written; an explicit empty string clears a value).
+1. Make sure CloudTrail is enabled in your AWS account and delivering events to a CloudWatch Logs log group.
+2. Open **Settings** in Snitch.
+3. Enter the log group name (e.g., `/aws/cloudtrail/my-trail`) and save.
+
+Once configured, Snitch queries that log group for each session's activity. If it's left blank, the audit trail is simply empty.
 
 ---
 
-## Settings Fields
+## Notifications
 
-| Field | Type | Description |
+Snitch can notify a team channel or mailing list about the access-request lifecycle through two independent channels — **Slack** and **email (Amazon SNS)**. Every notification is best-effort: if delivery fails, it never blocks or breaks the underlying access request.
+
+### What gets notified
+
+| Event | When it fires | Channels |
 |---|---|---|
-| `cloudTrailLogGroupName` | string | The CloudWatch log group where CloudTrail events are delivered |
-| `slackBotToken` | string | Slack app OAuth bot token (`xoxb-…`) |
-| `slackChannelId` | string | Slack channel ID for approval/notification messages |
-| `slackSigningSecret` | string | Slack signing secret used to verify interactive callbacks |
-| `slackNotificationsEnabled` | boolean | Send requested/finished notifications to Slack |
-| `snsNotificationsEnabled` | boolean | Send requested/finished notifications to Amazon SNS |
-| `snsApprovalNotificationsEnabled` | boolean | Send approval-required notifications to Amazon SNS |
-| `snsTopicArn` | string (read-only) | The app-managed SNS topic ARN — sourced from the `NOTIFICATIONS_TOPIC_ARN` env var, not DynamoDB |
+| **Access requested** | A user submits a request | Slack, email |
+| **Access finished** | A granted session ends (expired or revoked) | Slack, email |
+| **Approval required** | A request is waiting for an approver | Slack (interactive buttons), email (link to the app) |
 
-All fields are optional; booleans default to `false` on read.
+Each channel is controlled by its own toggle, so you can, for example, send approval alerts by email while sending requested/finished updates to Slack.
 
----
+### Slack
 
-## GraphQL Operations
+To use Slack notifications, enter the Slack app credentials (bot token, channel, and signing secret) in the **Slack Integration** card, then enable the Slack notifications toggle.
 
-```graphql
-getAppSettings: AppSettings
-updateAppSettings(
-  cloudTrailLogGroupName: String
-  slackBotToken: String
-  slackChannelId: String
-  slackSigningSecret: String
-  slackNotificationsEnabled: Boolean
-  snsNotificationsEnabled: Boolean
-  snsApprovalNotificationsEnabled: Boolean
-): AppSettings
-```
+- **Requested / finished** messages are informational.
+- **Approval required** messages include **Approve** / **Reject** buttons so approvers can act directly from Slack. The clicker's identity is verified and authorized before anything happens, so only real approvers can act.
 
-Both are custom AppSync resolvers backed by Lambda, gated to the `Admins` Cognito group. `snsTopicArn` is returned by `getAppSettings` (from the environment) but is **not** a mutation argument.
+### Email (Amazon SNS)
 
----
+Email notifications are delivered through an app-managed Amazon SNS topic. To receive them:
 
-## Lambda Handlers
+1. Deploy the backend so the topic exists.
+2. In **Settings**, copy the read-only **SNS Topic ARN**.
+3. In the AWS console, create a subscription on that topic (protocol **Email** or **SMS**) for your endpoint, and confirm it from the confirmation message.
+4. Enable the relevant SNS toggle(s) in Settings.
 
-| Handler | File | Purpose |
-|---|---|---|
-| `getSettingsHandler` | `amplify/functions/settings/getSettingsHandler.ts` | Reads `settingKey: "global"` from `AppSettingsTable`; merges the DynamoDB fields with the read-only `snsTopicArn` from the environment |
-| `updateSettingsHandler` | `amplify/functions/settings/updateSettingsHandler.ts` | Partially updates the `settingKey: "global"` record with the provided fields; returns the saved values |
+Email subject lines include the account label, for example `AWS access approval required - Production (111111111111)`.
 
----
-
-## IAM Permissions
-
-| Handler | Required permissions |
-|---|---|
-| `getSettings` | `dynamodb:GetItem` on `AppSettingsTable` |
-| `updateSettings` | `dynamodb:UpdateItem` on `AppSettingsTable` |
-
----
-
-## Notification Settings
-
-The **Access-Request Notifications** card exposes three checkboxes and the SNS topic ARN. See the [Notifications]({% link pages/notifications.md %}) page for what each event delivers, how to subscribe an SNS endpoint, and the email subject formats.
-
-- **Send access-request notifications to Amazon SNS** → `snsNotificationsEnabled`
-- **Send approval requests to Amazon SNS** → `snsApprovalNotificationsEnabled`
-- **Send access-request notifications to Slack** → `slackNotificationsEnabled` (requires the Slack Bot Token + Channel ID above)
-
-The SNS topic is app-managed; copy the read-only **SNS Topic ARN** and subscribe email/SMS endpoints to it in the AWS console.
-
----
-
-## CloudTrail Log Group Configuration
-
-To enable the audit trail on the [Elevated Access]({% link pages/elevated-access.md %}) page:
-
-1. Ensure CloudTrail is enabled in your AWS account and is configured to deliver events to a CloudWatch Logs log group.
-2. Navigate to **Settings** in the Snitch UI (admin-only).
-3. Enter the log group name (e.g., `/aws/cloudtrail/my-trail`).
-4. Save the settings.
-
-Once configured, the `getCloudTrailLogs` handler reads the log group name at runtime and queries it for events matching the requester's email address.
+{: .note }
+Approval **emails** deliberately don't carry one-click approve/reject buttons: an email recipient can't be securely identified, so the message instead links to the in-app Approve Requests page, where the approver signs in and acts with full authorization. Slack approvals stay interactive because the Slack click is verified and authorized.

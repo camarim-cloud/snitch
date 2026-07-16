@@ -91,7 +91,7 @@ Snitch uses IAM Identity Center for sign-in. Before running `npm run sandbox` yo
 2. Note your Identity Store ID.
 3. Note the immutable **GroupId** (a UUID) of the IDC group whose members should be admins (and, optionally, of an auditor group).
 
-Provide the synth-time values in Amplify Hosting under Build settings → Environment variables (or export them in your shell for a local sandbox). **No AWS Secrets Manager secret is required** — the SAML metadata URL is public.
+Provide the synth-time values in Amplify Hosting under Build settings → Environment variables (or export them in your shell for a local sandbox). The SAML metadata URL is public information and is provided as a plain environment variable like every other setting.
 
 Required:
 
@@ -105,13 +105,15 @@ Optional:
 - `COGNITO_DOMAIN_PREFIX` — auto-derived as `snitch-<branch>-<app-id>` in an Amplify Hosting build; **required for a local sandbox** (no Amplify app id to derive from)
 - `APP_CALLBACK_URL` — auto-derived as `https://<branch>.<app-id>.amplifyapp.com` in Amplify Hosting, or `http://localhost:5173` for a local sandbox
 
-For local sandbox runs, set the same values in your shell before `npx ampx sandbox`. The convenience script `scripts/set-sandbox-env.sh` does this — edit its values, then **source** it (do not execute it, or the exports won't persist):
+For local sandbox runs, set the same values in your shell before `npx ampx sandbox`. Copy the tracked template `scripts/set-sandbox-env.example.sh` to `scripts/set-sandbox-env.sh` (git-ignored — it holds your real values), edit them, then **source** it (do not execute it, or the exports won't persist):
 
 ```bash
+cp scripts/set-sandbox-env.example.sh scripts/set-sandbox-env.sh
+# edit scripts/set-sandbox-env.sh with your real values, then:
 source scripts/set-sandbox-env.sh
 ```
 
-See the full step-by-step guide in [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md).
+See the full step-by-step guide in [docs/pages/getting-started.md](docs/pages/getting-started.md) (production) and [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md) (local sandbox).
 
 ### Deploy backend sandbox
 
@@ -122,7 +124,7 @@ npx ampx sandbox
 
 Deploys all backend infrastructure and writes `amplify_outputs.json` with the resource endpoints.
 
-After the first deploy, update the **Application SAML audience** in the IDC console to match the newly created User Pool ID. See [Step 5 of the setup guide](docs/pages/idc-saml-setup.md#step-5--deploy-and-update-the-audience-uri) for details.
+After the first deploy, update the **Application SAML audience** in the IDC console to match the newly created User Pool ID. See [Update the SAML Audience URI](docs/pages/idc-saml-setup.md#update-the-saml-audience-uri) for details.
 
 ### Run frontend
 

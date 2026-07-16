@@ -1,10 +1,11 @@
 ---
 title: Elevated Access
 layout: default
-nav_order: 8
+parent: Admin Features
+nav_order: 1
 ---
 
-# Elevated Access (Admin)
+# Elevated Access
 {: .no_toc }
 
 ## Table of Contents
@@ -15,88 +16,29 @@ nav_order: 8
 
 ---
 
-## Overview
+## What It Does
 
-The **Elevated Access** page is an admin-only view that gives administrators complete visibility into all JIT access requests across all users, with the ability to revoke active sessions early and inspect the associated CloudTrail audit trail.
-
-Access to this page requires membership in the **`Admins`** Cognito group.
+**Elevated Access** is the admin control room for JIT access. It gives administrators complete visibility into every access request across all users, the ability to end active sessions early, and a per-session CloudTrail audit trail. It is available only to admins.
 
 ---
 
-## Features
+## View All Requests
 
-### View All Requests
-
-`listAllAccessRequests` returns every `AccessRequestItem` across all users, sorted newest-first. Admins can filter and search by any field.
-
-### Revoke Active Sessions
-
-Admins can select any `ACTIVE` request and revoke it before its natural expiry. The revocation flow:
-
-1. Admin submits a revoke action with an optional comment via the `revokeAccess` mutation.
-2. `revokeAccessHandler` calls `SendTaskSuccess` on the Step Functions task token stored during `WaitForEarlyRevocation`, passing `revokedByAdmin: true`.
-3. The state machine immediately transitions to `RemovePermissionSet`.
-4. `removePermissionSetHandler` deletes the SSO account assignment, writes `deactivatedAt`, and sets the status to `REVOKED`.
-
-The optional `revokeComment` is stored atomically on the `AccessRequestItem` and surfaced as a "Revoke reason" column in the table.
-
-### CloudTrail Audit Trail
-
-Admins can open a details panel for any selected request to view the associated CloudTrail events.
-
-The `getCloudTrailLogs` mutation:
-
-1. Reads `cloudTrailLogGroupName` from `AppSettingsTable`. Returns `[]` if not configured.
-2. Calls CloudWatch Logs `FilterLogEvents` with:
-   - `startTime` / `endTime` from `activatedAt` / `deactivatedAt` (falls back to `createdAt` + `durationMinutes` for older records)
-   - `filterPattern: ?"<idcUserEmail>"` — matches any CloudTrail event whose JSON contains the requester's email address
-3. Parses each `event.message` as a CloudTrail event (bare JSON or `{Records:[...]}` wrapper) and returns up to 1,000 events.
-
-The filter pattern catches `AssumedRole` sessions from SSO, where `userIdentity.arn` takes the form:
-
-```
-arn:aws:sts::ACCOUNT:assumed-role/AWSReservedSSO_PermissionSet_HASH/<email>
-```
+The page lists every access request from every user, newest first, with its status, requester, account, permission set, duration, and timestamps. Admins can filter and search to find any request.
 
 ---
 
-## `revokeAccess` Mutation
+## Revoke Active Sessions
 
-```graphql
-revokeAccess(requestId: String!, revokeComment: String): AccessRequestItem
-```
-
-The `revokeComment` argument is optional and written atomically alongside the task token clearance.
+An admin can select any **active** request and end it before its scheduled expiry — useful when access is no longer needed or a session looks suspicious. Revoking immediately removes the permission set from the user's account, and the admin can record an optional reason, which appears in a **Revoke reason** column for the audit record. The request's status changes to *Revoked*.
 
 ---
 
-## Lambda Handlers
+## CloudTrail Audit Trail
 
-| Handler | Purpose |
-|---|---|
-| `listAllAccessRequestsHandler.ts` | Returns all requests across all users (admin-only, newest first) |
-| `revokeAccessHandler.ts` | Signals `WaitForEarlyRevocation` via `SendTaskSuccess`; persists optional `revokeComment` |
-| `getCloudTrailLogsHandler.ts` | Reads configured log group; calls CloudWatch Logs `FilterLogEvents`; returns parsed events |
+For any request, an admin can open its details to see the **CloudTrail events** generated during that access window — exactly what the user did while their elevated access was active. Snitch narrows the audit trail to the real session window and to the requester's identity, so each session's activity is easy to review.
 
----
+This requires a CloudTrail log group to be configured on the [Settings]({% link pages/settings.md %}#cloudtrail-audit-logs) page. Without it, the audit trail is empty.
 
-## IAM Permissions
-
-| Handler | Required permissions |
-|---|---|
-| `listAllAccessRequests` | `dynamodb:Scan` on `AccessRequestTable` |
-| `revokeAccess` | `dynamodb:GetItem`, `UpdateItem` on `AccessRequestTable`; `states:SendTaskSuccess` |
-| `getCloudTrailLogs` | `dynamodb:GetItem` on `AppSettingsTable`; `logs:FilterLogEvents` on `*` |
-
-`logs:FilterLogEvents` is scoped to `*` because the log group name is runtime-dynamic (configured by the admin in Settings).
-
----
-
-## Prerequisites
-
-The CloudTrail audit trail requires:
-
-1. CloudTrail enabled for the AWS account, delivering events to a CloudWatch log group.
-2. The log group name configured in the [Settings]({% link pages/settings.md %}) page.
-
-Without a configured log group, `getCloudTrailLogs` returns an empty array.
+{: .note }
+The same read-only audit trail is available to auditors on the [Session Activity]({% link pages/session-activity.md %}) page.

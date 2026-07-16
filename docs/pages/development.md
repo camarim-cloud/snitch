@@ -177,7 +177,7 @@ Write **why**, not what. Only add a comment when the reason is non-obvious: a hi
 |---|---|---|
 | `COGNITO_DOMAIN_PREFIX` | `amplify/backend.ts` (via `amplify/synthEnv.ts`) | Optional in Amplify Hosting — auto-derives as `snitch-<branch>-<app-id>` from `AWS_APP_ID`/`AWS_BRANCH`. Required for a local sandbox (no app id to derive from). |
 | `APP_CALLBACK_URL` | `amplify/backend.ts` (via `amplify/synthEnv.ts`) | Optional — auto-derives as `https://<branch>.<app-id>.amplifyapp.com` in Amplify Hosting, or `http://localhost:5173` for a local sandbox |
-| `IDC_SAML_METADATA_URL` | `amplify/cognitoAuth.ts` (SAML IdP) | Required synth-time env var (public metadata URL; was AWS Secrets Manager `snitch/auth-config`) |
+| `IDC_SAML_METADATA_URL` | `amplify/cognitoAuth.ts` (SAML IdP) | Required synth-time env var; the IDC SAML metadata URL (public information) |
 | `IDC_IDENTITY_STORE_ID` | `preTokenGenerationHandler` | Required synth-time env var; define it in Amplify Hosting or export it locally |
 | `ADMIN_GROUP_ID` | `preTokenGenerationHandler` | Required synth-time env var; the immutable IDC GroupId whose members receive the `Admins` claim |
 | `AUDITOR_GROUP_ID` | `preTokenGenerationHandler` | Optional synth-time env var; the IDC GroupId whose members receive the `Auditors` claim (unset ⇒ no auditors; no default) |
@@ -189,7 +189,7 @@ Write **why**, not what. Only add a comment when the reason is non-obvious: a hi
 
 The deploy-time (CDK token) variables are set in `amplify/backend.ts` via `addEnvironment(...)` on each function resource; the synth-time variables are resolved in `amplify/synthEnv.ts`.
 
-### Deploying the Sandbox — `scripts/set-sandbox-env.sh`
+### Deploying the Sandbox — `scripts/set-sandbox-env.example.sh`
 
 The **synth-time** variables must be present in the shell that runs `npm run sandbox`. For a local sandbox the required ones are `COGNITO_DOMAIN_PREFIX`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_ID`, and `IDC_SAML_METADATA_URL`; `AUDITOR_GROUP_ID` is optional (unset ⇒ no Auditors) and `APP_CALLBACK_URL` is optional (defaults to `http://localhost:5173`). In an Amplify Hosting build, `COGNITO_DOMAIN_PREFIX` and `APP_CALLBACK_URL` are also optional — they auto-derive from the reserved `AWS_APP_ID`/`AWS_BRANCH` build variables. If a required one is missing, synthesis fails, e.g.:
 
@@ -199,9 +199,11 @@ The **synth-time** variables must be present in the shell that runs `npm run san
 
 `COGNITO_DOMAIN_PREFIX` has its own message when it can neither be read nor derived: `COGNITO_DOMAIN_PREFIX is required outside Amplify Hosting (no AWS_APP_ID to derive a stable Cognito domain prefix).`
 
-`scripts/set-sandbox-env.sh` sets the required sandbox variables. Edit the values at the top of the file to match your AWS environment (at minimum, set the real `IDC_IDENTITY_STORE_ID` and `IDC_SAML_METADATA_URL`), then **source** it and deploy:
+`scripts/set-sandbox-env.example.sh` is the tracked template. Copy it to `scripts/set-sandbox-env.sh` (git-ignored, so your real values never get committed), edit the values at the top to match your AWS environment (at minimum, set the real `IDC_IDENTITY_STORE_ID` and `IDC_SAML_METADATA_URL`), then **source** your copy and deploy:
 
 ```bash
+cp scripts/set-sandbox-env.example.sh scripts/set-sandbox-env.sh
+# edit scripts/set-sandbox-env.sh, then:
 source scripts/set-sandbox-env.sh   # exports the vars into your current shell
 npm run sandbox                     # synthesizes and deploys with them in scope
 ```
@@ -216,9 +218,9 @@ export IDC_IDENTITY_STORE_ID=d-1234567890
 source scripts/set-sandbox-env.sh
 ```
 
-The script validates that the required variables (`COGNITO_DOMAIN_PREFIX`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_ID`, `IDC_SAML_METADATA_URL`) are non-empty (aborting otherwise) and warns if a placeholder is still in place. `IDC_SAML_METADATA_URL` is now set here as a plain environment variable — it is no longer read from AWS Secrets Manager.
+The script validates that the required variables (`COGNITO_DOMAIN_PREFIX`, `IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_ID`, `IDC_SAML_METADATA_URL`) are non-empty (aborting otherwise) and warns if a placeholder is still in place.
 
 In Amplify Hosting, set these variables in the app's environment-variable configuration instead of sourcing the script (`COGNITO_DOMAIN_PREFIX` and `APP_CALLBACK_URL` may be omitted there — they auto-derive from `AWS_APP_ID`/`AWS_BRANCH`).
 
 {: .note }
-`IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_ID`, `AUDITOR_GROUP_ID`, and `IDC_SAML_METADATA_URL` are plain string values embedded at CDK synthesis time — they are **not** CloudFormation dynamic references (`{{resolve:secretsmanager:...}}`). This is intentional: Lambda environment variables in Amplify Gen 2's nested stacks cannot resolve dynamic references because CDK generates environment-agnostic stacks with pseudo-parameter ARNs that CloudFormation cannot expand inside `{{resolve:...}}` strings.
+`IDC_IDENTITY_STORE_ID`, `ADMIN_GROUP_ID`, `AUDITOR_GROUP_ID`, and `IDC_SAML_METADATA_URL` are plain string values embedded at CDK synthesis time — they are **not** CloudFormation dynamic references. This is intentional: Lambda environment variables in Amplify Gen 2's nested stacks cannot resolve dynamic references because CDK generates environment-agnostic stacks with pseudo-parameter ARNs that CloudFormation cannot expand inside `{{resolve:...}}` strings.
