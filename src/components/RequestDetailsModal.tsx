@@ -3,6 +3,7 @@ import { generateClient } from "aws-amplify/data";
 import type { Schema } from "../../amplify/data/resource";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { formatDuration } from "@/utils/duration";
+import { formatDateTime } from "@/utils/formatDateTime";
 import { accessRequestStatusType } from "@/utils/accessRequestStatus";
 import type { AccessRequestRow } from "@/utils/accessRequestRow";
 
@@ -135,14 +136,14 @@ export function RequestDetailsModal({
       visible={visible}
       onDismiss={onDismiss}
       size="max"
-      header={`Request Details — ${request.userLabel}`}
+      header={`Request Details — ${request.idcUserEmail || request.userLabel}`}
     >
       <SpaceBetween size="l">
         {/* Request metadata */}
         <ColumnLayout columns={3} variant="text-grid">
           <SpaceBetween size="xs">
             <Box fontWeight="bold" variant="awsui-key-label">User</Box>
-            <Box>{request.userLabel}</Box>
+            <Box>{request.idcUserEmail || request.userLabel}</Box>
           </SpaceBetween>
           <SpaceBetween size="xs">
             <Box fontWeight="bold" variant="awsui-key-label">Account ID</Box>
@@ -164,7 +165,7 @@ export function RequestDetailsModal({
           </SpaceBetween>
           <SpaceBetween size="xs">
             <Box fontWeight="bold" variant="awsui-key-label">Requested at</Box>
-            <Box>{request.createdAt}</Box>
+            <Box>{formatDateTime(request.createdAt)}</Box>
           </SpaceBetween>
           {request.justification && (
             <SpaceBetween size="xs">
@@ -187,7 +188,7 @@ export function RequestDetailsModal({
           {request.decidedAt && (
             <SpaceBetween size="xs">
               <Box fontWeight="bold" variant="awsui-key-label">Decided at</Box>
-              <Box>{request.decidedAt}</Box>
+              <Box>{formatDateTime(request.decidedAt)}</Box>
             </SpaceBetween>
           )}
           {request.revokeComment && (
@@ -217,7 +218,7 @@ export function RequestDetailsModal({
                   {
                     id: "eventTime",
                     header: "Event Time",
-                    cell: (r) => r.eventTime ?? r.timestamp ?? "",
+                    cell: (r) => formatDateTime(r.eventTime ?? r.timestamp ?? ""),
                     width: 200,
                   },
                   {

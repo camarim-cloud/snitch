@@ -53,6 +53,7 @@ const EXPIRED_REQUEST = {
   ...ACTIVE_REQUEST,
   id: "req-2",
   idcUserDisplayName: "Bob",
+  idcUserEmail: "bob@example.com",
   status: "EXPIRED",
   createdAt: "2024-01-01T10:00:00Z",
 };
@@ -97,8 +98,10 @@ describe("ElevatedAccessPage", () => {
       });
       render(<ElevatedAccessPage />);
 
-      await waitFor(() => expect(screen.getByText("Alice")).toBeInTheDocument());
-      expect(screen.getByText("Bob")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByText("alice@example.com")).toBeInTheDocument()
+      );
+      expect(screen.getByText("bob@example.com")).toBeInTheDocument();
     });
 
     it("shows an error alert when the query fails", async () => {
@@ -124,13 +127,13 @@ describe("ElevatedAccessPage", () => {
 
     it("is disabled when no row is selected", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
       expect(screen.getByRole("button", { name: /view details/i })).toBeDisabled();
     });
 
     it("is enabled when any row is selected (regardless of status)", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Bob"));
+      await waitFor(() => screen.getByText("bob@example.com"));
 
       // Select the EXPIRED row
       await userEvent.click(screen.getAllByRole("radio")[1]);
@@ -139,7 +142,7 @@ describe("ElevatedAccessPage", () => {
 
     it("opens the details modal when clicked", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
 
       await userEvent.click(screen.getAllByRole("radio")[0]);
       await userEvent.click(screen.getByRole("button", { name: /view details/i }));
@@ -160,7 +163,7 @@ describe("ElevatedAccessPage", () => {
 
     async function openDetailsModal() {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
       await userEvent.click(screen.getAllByRole("radio")[0]);
       await userEvent.click(screen.getByRole("button", { name: /view details/i }));
       await waitFor(() => screen.getByText(/request details/i));
@@ -223,6 +226,7 @@ describe("ElevatedAccessPage", () => {
       });
 
       render(<ElevatedAccessPage />);
+      // idcUserEmail is null here, so the User column falls back to the display name.
       await waitFor(() => screen.getByText("Alice"));
       await userEvent.click(screen.getAllByRole("radio")[0]);
       await userEvent.click(screen.getByRole("button", { name: /view details/i }));
@@ -245,13 +249,13 @@ describe("ElevatedAccessPage", () => {
 
     it("is disabled when no row is selected", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
       expect(screen.getByRole("button", { name: /revoke access/i })).toBeDisabled();
     });
 
     it("is disabled when the selected row is not ACTIVE", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Bob"));
+      await waitFor(() => screen.getByText("bob@example.com"));
 
       await userEvent.click(screen.getAllByRole("radio")[1]);
       expect(screen.getByRole("button", { name: /revoke access/i })).toBeDisabled();
@@ -259,7 +263,7 @@ describe("ElevatedAccessPage", () => {
 
     it("is enabled when the selected row is ACTIVE", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
 
       await userEvent.click(screen.getAllByRole("radio")[0]);
       expect(screen.getByRole("button", { name: /revoke access/i })).toBeEnabled();
@@ -276,7 +280,7 @@ describe("ElevatedAccessPage", () => {
 
     it("opens a confirmation modal when Revoke Access is clicked", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
 
       await userEvent.click(screen.getAllByRole("radio")[0]);
       await userEvent.click(screen.getByRole("button", { name: /revoke access/i }));
@@ -286,7 +290,7 @@ describe("ElevatedAccessPage", () => {
 
     it("calls revokeAccess mutation and updates the row to REVOKED on confirm", async () => {
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
 
       await userEvent.click(screen.getAllByRole("radio")[0]);
       await userEvent.click(screen.getByRole("button", { name: /revoke access/i }));
@@ -305,7 +309,7 @@ describe("ElevatedAccessPage", () => {
       });
 
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
 
       await userEvent.click(screen.getAllByRole("radio")[0]);
       await userEvent.click(screen.getByRole("button", { name: /revoke access/i }));
@@ -326,9 +330,9 @@ describe("ElevatedAccessPage", () => {
         errors: undefined,
       });
       render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("Alice"));
+      await waitFor(() => screen.getByText("alice@example.com"));
 
-      expect(screen.getByText("Bob")).toBeInTheDocument();
+      expect(screen.getByText("bob@example.com")).toBeInTheDocument();
     });
   });
 });

@@ -48,6 +48,7 @@ const NO_SESSION = {
   ...SESSION,
   id: "req-2",
   idcUserDisplayName: "Bob",
+  idcUserEmail: "bob@example.com",
   status: "PENDING_APPROVAL",
   requiresApproval: true,
   activatedAt: "",
@@ -83,8 +84,10 @@ describe("SessionActivityPage", () => {
     });
     render(<SessionActivityPage />);
 
-    await waitFor(() => expect(screen.getByText("Alice")).toBeInTheDocument());
-    expect(screen.queryByText("Bob")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("alice@example.com")).toBeInTheDocument()
+    );
+    expect(screen.queryByText("bob@example.com")).not.toBeInTheDocument();
   });
 
   it("opens the session logs modal and queries CloudTrail for the session window", async () => {
@@ -93,7 +96,7 @@ describe("SessionActivityPage", () => {
       errors: undefined,
     });
     render(<SessionActivityPage />);
-    await waitFor(() => screen.getByText("Alice"));
+    await waitFor(() => screen.getByText("alice@example.com"));
 
     await userEvent.click(screen.getAllByRole("radio")[0]);
     await userEvent.click(screen.getByRole("button", { name: /view session logs/i }));
@@ -119,7 +122,7 @@ describe("SessionActivityPage", () => {
       errors: undefined,
     });
     render(<SessionActivityPage />);
-    await waitFor(() => screen.getByText("Alice"));
+    await waitFor(() => screen.getByText("alice@example.com"));
 
     await userEvent.click(screen.getAllByRole("radio")[0]);
     await userEvent.click(screen.getByRole("button", { name: /view session logs/i }));
