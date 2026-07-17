@@ -69,13 +69,20 @@ src/              # Frontend (React)
 
 ## Getting Started
 
+This is a condensed overview. For the full step-by-step walkthrough, see [docs/pages/getting-started.md](docs/pages/getting-started.md) (production) and [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md) (local sandbox).
+
 ### Prerequisites
 
 - Node.js v18.16.0+
-- AWS account with:
-  - IAM Identity Center enabled
+- An AWS account with:
+  - IAM Identity Center (IDC) enabled
   - AWS Organizations configured (for account/OU discovery)
-  - Appropriate IAM permissions for the sandbox role
+  - Permissions to create IDC applications and Amplify apps
+- A GitHub account with access to this repository (Amplify Hosting deploys directly from GitHub)
+
+> **Deploy in the same account and Region as IDC.** Snitch calls the IDC Identity Store and SSO APIs directly, so it must run in the same AWS account and Region that hosts your IAM Identity Center instance. If IDC administration has been **delegated to a member account**, deploy Snitch into that delegated administrator account — not the Organizations management account. Delegating IDC to a dedicated account (rather than running it in the management account) is the recommended practice.
+
+> **CloudTrail → CloudWatch for session audit.** The Session Activity and Elevated Access audit trails read events from CloudWatch Logs. For those pages to show anything, CloudTrail must be configured to deliver its logs to a CloudWatch Logs log group (an S3-only trail is not enough). You supply that log group name later on the in-app **Settings** page.
 
 ### Install
 
@@ -83,15 +90,17 @@ src/              # Frontend (React)
 npm install
 ```
 
-### Before deploying — IAM Identity Center setup
+### IAM Identity Center setup
 
-Snitch uses IAM Identity Center for sign-in. Before running `npm run sandbox` you must:
+Snitch uses IAM Identity Center for sign-in. Before deploying, register a **SAML 2.0 application** in IDC and collect:
 
-1. Register a custom application in IAM Identity Center and note the metadata URL.
-2. Note your Identity Store ID.
-3. Note the immutable **GroupId** (a UUID) of the IDC group whose members should be admins (and, optionally, of an auditor group).
+1. The application's **SAML metadata URL** (public information).
+2. Your **Identity Store ID** (`d-xxxxxxxxxxxx`).
+3. The immutable **GroupId** (a UUID) of the IDC group whose members should be admins — and, optionally, an auditor group's GroupId.
 
-Provide the synth-time values in Amplify Hosting under Build settings → Environment variables (or export them in your shell for a local sandbox). The SAML metadata URL is public information and is provided as a plain environment variable like every other setting.
+> Register a **separate** IDC application for each environment. Do not reuse the production application for a sandbox: each environment has its own Cognito domain, User Pool, ACS URL, and SAML audience, and sharing one application leads to sign-in mismatches.
+
+These values are supplied as synth-time **environment variables**.
 
 Required:
 
@@ -102,27 +111,30 @@ Required:
 Optional:
 
 - `AUDITOR_GROUP_ID` (the IDC GroupId whose members receive the read-only `Auditors` claim; unset ⇒ no auditors)
-- `COGNITO_DOMAIN_PREFIX` — auto-derived as `snitch-<branch>-<app-id>` in an Amplify Hosting build; **required for a local sandbox** (no Amplify app id to derive from)
+- `COGNITO_DOMAIN_PREFIX` — auto-derived as `snitch-<branch>-<app-id>` in an Amplify Hosting build; **required for a local sandbox** (no Amplify app id to derive from). Must be **globally unique** — a value already in use fails the deploy.
 - `APP_CALLBACK_URL` — auto-derived as `https://<branch>.<app-id>.amplifyapp.com` in Amplify Hosting, or `http://localhost:5173` for a local sandbox
 
-For local sandbox runs, set the same values in your shell before `npx ampx sandbox`. Copy the tracked template `scripts/set-sandbox-env.example.sh` to `scripts/set-sandbox-env.sh` (git-ignored — it holds your real values), edit them, then **source** it (do not execute it, or the exports won't persist):
+### Deploy to production (Amplify Hosting)
+
+1. In the **AWS Amplify** console, choose **Create new app** and connect this GitHub repository and branch.
+2. Add the environment variables above. The Amplify console hides this field: set it under **Advanced settings** on the create-app **Review** step, or afterward under **Hosting → Environment variables → Manage variables**. (If you skip them, the first build fails — add the variables and redeploy.)
+3. **Save and deploy.** Amplify provisions all backend resources and hosts the frontend at `https://<branch>.<app-id>.amplifyapp.com`.
+4. After the first deploy, finalize the IDC application's **ACS URL** and **SAML audience** to match the newly created Cognito domain and User Pool ID.
+
+See [docs/pages/getting-started.md](docs/pages/getting-started.md) for the complete production flow.
+
+### Deploy a local sandbox
+
+Register a dedicated sandbox IDC application (per the note above), then set the same environment variables in your shell before `npx ampx sandbox`. Copy the tracked template `scripts/set-sandbox-env.example.sh` to `scripts/set-sandbox-env.sh` (git-ignored — it holds your real values), edit it, then **source** it (do not execute it, or the exports won't persist):
 
 ```bash
 cp scripts/set-sandbox-env.example.sh scripts/set-sandbox-env.sh
 # edit scripts/set-sandbox-env.sh with your real values, then:
 source scripts/set-sandbox-env.sh
-```
-
-See the full step-by-step guide in [docs/pages/getting-started.md](docs/pages/getting-started.md) (production) and [docs/pages/idc-saml-setup.md](docs/pages/idc-saml-setup.md) (local sandbox).
-
-### Deploy backend sandbox
-
-```bash
-source scripts/set-sandbox-env.sh   # exports the required synth-time env vars
 npx ampx sandbox
 ```
 
-Deploys all backend infrastructure and writes `amplify_outputs.json` with the resource endpoints.
+`npx ampx sandbox` deploys all backend infrastructure and writes `amplify_outputs.json` with the resource endpoints.
 
 After the first deploy, update the **Application SAML audience** in the IDC console to match the newly created User Pool ID. See [Update the SAML Audience URI](docs/pages/idc-saml-setup.md#update-the-saml-audience-uri) for details.
 
