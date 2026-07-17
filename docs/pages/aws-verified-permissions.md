@@ -38,7 +38,7 @@ Controls whether an IDC principal can request access to an AWS account with a sp
 
 ### `approve` action
 
-Controls whether a Cognito principal can approve a JIT access request for an AWS account.
+Controls whether a principal can approve a JIT access request for an AWS account.
 
 | Element | Type |
 |---|---|
@@ -47,7 +47,9 @@ Controls whether a Cognito principal can approve a JIT access request for an AWS
 | Action | `Snitch::Action::"approve"` |
 | Context | `{ permissionSetArn: String (required) }` |
 
-The `assume` and `approve` actions use **different principal namespaces** — IDC IDs for `assume`, Cognito identifiers for `approve` — to avoid conflating the two identity systems.
+**Groups always come from IAM Identity Center.** Snitch does not use Cognito user-pool groups anywhere. The pre-token-generation trigger populates the `cognito:groups` claim with the user's immutable **IDC GroupIds**, so both `Snitch::Group` (for `assume`) and `Snitch::ApproverGroup` (for `approve`) key on the same IDC GroupIds — a group grant works identically for requesting and approving.
+
+The `assume` and `approve` actions keep **separate Cedar entity types** only because they identify an *individual* user differently: `assume` by the user's **IDC user ID**, `approve` by the caller's **Cognito sign-in username** (`idc_<email>` for SAML-federated users). Group identity is IDC in both cases.
 
 ---
 
@@ -91,9 +93,11 @@ Used by `approveRequestHandler`, `rejectRequestHandler`, and `listPendingApprova
   action:    { actionType: "Snitch::Action", actionId: "approve" },
   resource:  { entityType: "Snitch::Account", entityId: "<account-id>" },
   context:   { contextMap: { permissionSetArn: { string: "<arn>" } } },
-  entities:  // Cognito group memberships as Snitch::Approver → parents Snitch::ApproverGroup
+  entities:  // caller's IDC GroupIds (from the cognito:groups claim) as Snitch::Approver → parents Snitch::ApproverGroup
 }
 ```
+
+The **Slack approval path** (`slackInteractiveHandler`) builds the same check. It resolves the approver's Cognito username for the `Snitch::Approver` principal, then resolves the approver's **IDC GroupIds** by email from IAM Identity Center — exactly like `preTokenGenerationHandler` does for the web path — and passes them as `Snitch::ApproverGroup` parents. It reads no Cognito user-pool groups, so a GROUP approval policy authorizes the same approver identically over Slack and the web.
 
 ---
 
@@ -133,9 +137,9 @@ permit (
   ["arn:aws:sso:::permissionSet/ps-1"].contains(context.permissionSetArn)
 };
 
-// GROUP approver
+// GROUP approver — the principal id is the immutable IDC GroupId
 permit (
-  principal in Snitch::ApproverGroup::"Approvers",
+  principal in Snitch::ApproverGroup::"a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   action == Snitch::Action::"approve",
   resource == Snitch::Account::"111111111111"
 ) when {

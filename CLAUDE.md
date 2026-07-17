@@ -225,7 +225,7 @@ Action:    Snitch::Action::"approve"
 Context:   { permissionSetArn: String (required) }
 ```
 
-The `assume` and `approve` actions use **different principal namespaces** — IDC IDs for `assume`, Cognito identifiers for `approve`. This avoids conflating the two identity systems in the same entity type.
+**Groups are always IAM Identity Center groups** — Snitch uses no Cognito user-pool groups anywhere. `preTokenGenerationHandler` populates `cognito:groups` with immutable IDC **GroupIds**, so both `Snitch::Group` (assume) and `Snitch::ApproverGroup` (approve) key on IDC GroupIds. The `assume` and `approve` actions keep **separate entity types** only because they identify an *individual* user differently — `assume` by IDC user ID, `approve` by the caller's Cognito sign-in username (`idc_<email>`). Group identity is IDC in both.
 
 The `approve` action reuses the `Snitch::Account` entity type (also used by `assume`) as its resource. The permission set ARN is not the resource — it is a `when`-clause condition that filters which requests an approver is authorized for on that account.
 

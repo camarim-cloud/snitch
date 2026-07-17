@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "crypto";
 
-const { mockDynamoSend, mockCognitoSend, mockAvpSend, mockLambdaSend, mockFetch } = vi.hoisted(
-  () => ({
+const { mockDynamoSend, mockCognitoSend, mockIdcSend, mockAvpSend, mockLambdaSend, mockFetch } =
+  vi.hoisted(() => ({
     mockDynamoSend: vi.fn(),
     mockCognitoSend: vi.fn(),
+    mockIdcSend: vi.fn(),
     mockAvpSend: vi.fn(),
     mockLambdaSend: vi.fn(),
     mockFetch: vi.fn(),
-  })
-);
+  }));
 
 vi.mock("@aws-sdk/client-dynamodb", () => ({ DynamoDBClient: class {} }));
 
@@ -27,7 +27,21 @@ vi.mock("@aws-sdk/client-cognito-identity-provider", () => ({
   ListUsersCommand: class {
     constructor(public input: unknown) {}
   },
-  AdminListGroupsForUserCommand: class {
+}));
+
+// Approver GROUP membership now comes from IAM Identity Center (IDC GroupIds), mirroring
+// preTokenGenerationHandler — the app defines no Cognito user-pool groups. Commands are tagged
+// with _type so the shared send spy can dispatch deterministically regardless of call order.
+vi.mock("@aws-sdk/client-identitystore", () => ({
+  IdentitystoreClient: class {
+    send = mockIdcSend;
+  },
+  ListUsersCommand: class {
+    _type = "IdcListUsers";
+    constructor(public input: unknown) {}
+  },
+  ListGroupMembershipsForMemberCommand: class {
+    _type = "IdcListGroupMemberships";
     constructor(public input: unknown) {}
   },
 }));
@@ -54,6 +68,7 @@ vi.mock("@aws-sdk/client-lambda", () => ({
 process.env.APP_SETTINGS_TABLE_NAME = "AppSettingsTable";
 process.env.ACCESS_REQUEST_TABLE_NAME = "AccessRequestTable";
 process.env.AUTH_USER_POOL_ID = "us-east-1_TestPool";
+process.env.IDC_IDENTITY_STORE_ID = "d-1234567890";
 process.env.AVP_POLICY_STORE_ID = "testPolicyStoreId";
 process.env.APPROVE_REQUEST_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123:function:approveRequest";
 process.env.REJECT_REQUEST_FUNCTION_ARN = "arn:aws:lambda:us-east-1:123:function:rejectRequest";
@@ -70,6 +85,7 @@ const REQUEST_ID = "req-abc-123";
 const SLACK_USER_ID = "U01234";
 const APPROVER_EMAIL = "approver@example.com";
 const COGNITO_USERNAME = "approver-cognito-sub";
+const IDC_GROUP_ID = "11111111-2222-3333-4444-555555555555";
 const RESPONSE_URL = "https://hooks.slack.com/actions/test";
 
 function slackSignature(timestamp: string, rawBody: string): string {
@@ -114,6 +130,20 @@ const REQUEST_ITEM = {
   idcUserId: "idc-user",
 };
 
+// Dispatch the two IdentityStore calls (resolve IDC user by email → its group memberships).
+// idcUserId=null models an email with no matching IDC user (empty group list).
+function setupIdcGroups(groupIds: string[], idcUserId: string | null = "idc-user-1") {
+  mockIdcSend.mockImplementation((cmd: { _type?: string }) => {
+    if (cmd._type === "IdcListUsers") {
+      return Promise.resolve({ Users: idcUserId ? [{ UserId: idcUserId }] : [] });
+    }
+    if (cmd._type === "IdcListGroupMemberships") {
+      return Promise.resolve({ GroupMemberships: groupIds.map((GroupId) => ({ GroupId })) });
+    }
+    return Promise.resolve({});
+  });
+}
+
 function setupHappyPath() {
   // DynamoDB: settings → request
   mockDynamoSend
@@ -123,10 +153,10 @@ function setupHappyPath() {
   mockFetch.mockResolvedValueOnce({
     json: async () => ({ ok: true, user: { profile: { email: APPROVER_EMAIL } } }),
   });
-  // Cognito: ListUsers → AdminListGroupsForUser
-  mockCognitoSend
-    .mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] })
-    .mockResolvedValueOnce({ Groups: [{ GroupName: "Approvers" }] });
+  // Cognito: ListUsers (username only — no Cognito group lookup anymore)
+  mockCognitoSend.mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] });
+  // IDC: resolve the approver's group memberships (immutable GroupIds)
+  setupIdcGroups([IDC_GROUP_ID]);
   // AVP: ALLOW
   mockAvpSend.mockResolvedValue({ decision: "ALLOW" });
   // Lambda invocation: success
@@ -300,14 +330,53 @@ describe("slackInteractiveHandler", () => {
     expect(responseBody.text).toMatch(/does not match/i);
   });
 
-  it("passes Cognito group names as ApproverGroup parents in the AVP call", async () => {
+  it("passes the approver's IDC GroupIds (not Cognito groups) as ApproverGroup parents in the AVP call", async () => {
     setupHappyPath();
     const body = makeBody("approve");
     await handler(makeEvent(body));
 
     const avpCall = mockAvpSend.mock.calls[0][0];
     const parents = avpCall.input.entities.entityList[0].parents;
-    expect(parents).toEqual([{ entityType: "Snitch::ApproverGroup", entityId: "Approvers" }]);
+    expect(parents).toEqual([{ entityType: "Snitch::ApproverGroup", entityId: IDC_GROUP_ID }]);
+    // Cognito is used only to resolve the username — never for group membership.
+    expect(mockCognitoSend).toHaveBeenCalledTimes(1);
+    const idcCommandTypes = mockIdcSend.mock.calls.map((c) => c[0]._type);
+    expect(idcCommandTypes).toEqual(["IdcListUsers", "IdcListGroupMemberships"]);
+  });
+
+  it("authorizes a GROUP-only approver whose grant comes from an IDC group, not their username", async () => {
+    // The USER (Snitch::Approver == username) has no direct policy; authorization must come
+    // from the group parent. AVP ALLOWs only because the IDC GroupId parent is present.
+    setupHappyPath();
+    await handler(makeEvent(makeBody("approve")));
+
+    const avpCall = mockAvpSend.mock.calls[0][0];
+    expect(avpCall.input.entities.entityList[0].parents).toEqual([
+      { entityType: "Snitch::ApproverGroup", entityId: IDC_GROUP_ID },
+    ]);
+    // Delegated invocation carries the same IDC GroupIds forward as the cognito:groups claim.
+    const payload = JSON.parse(Buffer.from(mockLambdaSend.mock.calls[0][0].input.Payload).toString());
+    expect(payload.identity.claims["cognito:groups"]).toEqual([IDC_GROUP_ID]);
+  });
+
+  it("falls back to an empty group list when the Slack email has no matching IDC user", async () => {
+    mockDynamoSend
+      .mockResolvedValueOnce({ Item: SETTINGS_ITEM })
+      .mockResolvedValueOnce({ Item: REQUEST_ITEM });
+    mockFetch
+      .mockResolvedValueOnce({ json: async () => ({ ok: true, user: { profile: { email: APPROVER_EMAIL } } }) })
+      .mockResolvedValueOnce({ json: async () => ({}) });
+    mockCognitoSend.mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] });
+    setupIdcGroups([], null); // no IDC user found → no group memberships
+    mockAvpSend.mockResolvedValue({ decision: "ALLOW" }); // USER-approver policy still resolves
+    mockLambdaSend.mockResolvedValue({ FunctionError: undefined });
+
+    const result = await handler(makeEvent(makeBody("approve")));
+    expect(result.statusCode).toBe(200);
+    const avpCall = mockAvpSend.mock.calls[0][0];
+    expect(avpCall.input.entities.entityList[0].parents).toEqual([]);
+    const payload = JSON.parse(Buffer.from(mockLambdaSend.mock.calls[0][0].input.Payload).toString());
+    expect(payload.identity.claims["cognito:groups"]).toEqual([]);
   });
 
   // ─── AVP authorization ─────────────────────────────────────────────────────
@@ -319,9 +388,8 @@ describe("slackInteractiveHandler", () => {
     mockFetch
       .mockResolvedValueOnce({ json: async () => ({ ok: true, user: { profile: { email: APPROVER_EMAIL } } }) })
       .mockResolvedValueOnce({ json: async () => ({}) });
-    mockCognitoSend
-      .mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] })
-      .mockResolvedValueOnce({ Groups: [] });
+    mockCognitoSend.mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] });
+    setupIdcGroups([]);
     mockAvpSend.mockResolvedValue({ decision: "DENY" });
     const body = makeBody("approve");
     const result = await handler(makeEvent(body));
@@ -351,7 +419,7 @@ describe("slackInteractiveHandler", () => {
     const payload = JSON.parse(Buffer.from(lambdaCall.input.Payload).toString());
     expect(payload.arguments.requestId).toBe(REQUEST_ID);
     expect(payload.identity.username).toBe(COGNITO_USERNAME);
-    expect(payload.identity.claims["cognito:groups"]).toEqual(["Approvers"]);
+    expect(payload.identity.claims["cognito:groups"]).toEqual([IDC_GROUP_ID]);
   });
 
   it("invokes rejectRequestFunction when action is reject", async () => {
@@ -390,9 +458,8 @@ describe("slackInteractiveHandler", () => {
     mockFetch
       .mockResolvedValueOnce({ json: async () => ({ ok: true, user: { profile: { email: APPROVER_EMAIL } } }) })
       .mockResolvedValueOnce({ json: async () => ({}) });
-    mockCognitoSend
-      .mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] })
-      .mockResolvedValueOnce({ Groups: [] });
+    mockCognitoSend.mockResolvedValueOnce({ Users: [{ Username: COGNITO_USERNAME }] });
+    setupIdcGroups([]);
     mockAvpSend.mockResolvedValue({ decision: "ALLOW" });
     mockLambdaSend.mockResolvedValue({
       FunctionError: "Unhandled",

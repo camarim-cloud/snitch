@@ -4,8 +4,13 @@ import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import {
   CognitoIdentityProviderClient,
   ListUsersCommand,
-  AdminListGroupsForUserCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
+import {
+  IdentitystoreClient,
+  ListUsersCommand as ListIdcUsersCommand,
+  ListGroupMembershipsForMemberCommand,
+  type GroupMembership,
+} from "@aws-sdk/client-identitystore";
 import {
   VerifiedPermissionsClient,
   IsAuthorizedCommand,
@@ -16,12 +21,14 @@ const REGION = process.env.AWS_REGION ?? "us-east-1";
 const SETTINGS_TABLE = process.env.APP_SETTINGS_TABLE_NAME!;
 const ACCESS_REQUEST_TABLE = process.env.ACCESS_REQUEST_TABLE_NAME!;
 const USER_POOL_ID = process.env.AUTH_USER_POOL_ID!;
+const IDENTITY_STORE_ID = process.env.IDC_IDENTITY_STORE_ID!;
 const POLICY_STORE_ID = process.env.AVP_POLICY_STORE_ID!;
 const APPROVE_FUNCTION_ARN = process.env.APPROVE_REQUEST_FUNCTION_ARN!;
 const REJECT_FUNCTION_ARN = process.env.REJECT_REQUEST_FUNCTION_ARN!;
 
 const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const cognito = new CognitoIdentityProviderClient({ region: REGION });
+const identitystore = new IdentitystoreClient({ region: REGION });
 const avp = new VerifiedPermissionsClient({ region: REGION });
 const lambda = new LambdaClient({ region: REGION });
 
@@ -87,9 +94,8 @@ async function getSlackUserEmail(userId: string, botToken: string): Promise<stri
   return body.user.profile.email;
 }
 
-async function getCognitoUserByEmail(
-  email: string
-): Promise<{ username: string; groups: string[] } | null> {
+// The Snitch::Approver principal is keyed on the Cognito username, so this lookup stays.
+async function getCognitoUsernameByEmail(email: string): Promise<string | null> {
   const listResult = await cognito.send(
     new ListUsersCommand({
       UserPoolId: USER_POOL_ID,
@@ -97,22 +103,36 @@ async function getCognitoUserByEmail(
       Limit: 1,
     })
   );
-  const user = listResult.Users?.[0];
-  if (!user?.Username) return null;
+  return listResult.Users?.[0]?.Username ?? null;
+}
 
-  const groupsResult = await cognito.send(
-    new AdminListGroupsForUserCommand({
-      UserPoolId: USER_POOL_ID,
-      Username: user.Username,
+// Snitch::ApproverGroup is keyed on the immutable IDC GroupId everywhere (approval policies,
+// preTokenGenerationHandler, the web approveRequestHandler) — never on Cognito user-pool groups,
+// of which the app defines none. Mirror preTokenGenerationHandler: resolve the caller's IDC
+// GroupIds by email so GROUP approval policies resolve identically over Slack and the web.
+async function getIdcGroupIdsByEmail(email: string): Promise<string[]> {
+  const listResult = await identitystore.send(
+    new ListIdcUsersCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      Filters: [{ AttributePath: "UserName", AttributeValue: email }],
     })
   );
-  const groups = (groupsResult.Groups ?? []).map((g) => g.GroupName ?? "").filter(Boolean);
-  return { username: user.Username, groups };
+  const idcUserId = listResult.Users?.[0]?.UserId;
+  // No IDC user → no group grants; USER-approver policies still resolve via the Cognito username.
+  if (!idcUserId) return [];
+
+  const memberships = await identitystore.send(
+    new ListGroupMembershipsForMemberCommand({
+      IdentityStoreId: IDENTITY_STORE_ID,
+      MemberId: { UserId: idcUserId },
+    })
+  );
+  return (memberships.GroupMemberships ?? []).map((m: GroupMembership) => m.GroupId!).filter(Boolean);
 }
 
 async function assertAvpAuthorized(
   cognitoUsername: string,
-  cognitoGroups: string[],
+  idcGroupIds: string[],
   accountId: string,
   permissionSetArn: string
 ): Promise<void> {
@@ -128,7 +148,7 @@ async function assertAvpAuthorized(
           {
             identifier: { entityType: "Snitch::Approver", entityId: cognitoUsername },
             attributes: {},
-            parents: cognitoGroups.map((g) => ({
+            parents: idcGroupIds.map((g) => ({
               entityType: "Snitch::ApproverGroup",
               entityId: g,
             })),
@@ -146,14 +166,16 @@ async function invokeLambdaAsApprover(
   functionArn: string,
   requestId: string,
   cognitoUsername: string,
-  cognitoGroups: string[],
+  idcGroupIds: string[],
   approverComment: string
 ): Promise<void> {
   const payload = JSON.stringify({
     arguments: { requestId, approverComment },
     identity: {
       username: cognitoUsername,
-      claims: { "cognito:groups": cognitoGroups },
+      // approveRequestHandler reads cognito:groups as IDC GroupIds (preTokenGenerationHandler
+      // populates the claim the same way on the web path) — match that shape here.
+      claims: { "cognito:groups": idcGroupIds },
     },
   });
 
@@ -256,8 +278,8 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
     return { statusCode: 200 };
   }
 
-  const cognitoUser = await getCognitoUserByEmail(slackUserEmail);
-  if (!cognitoUser) {
+  const cognitoUsername = await getCognitoUsernameByEmail(slackUserEmail);
+  if (!cognitoUsername) {
     await updateSlackMessage(
       responseUrl,
       "Your Slack email does not match any user in this system."
@@ -265,10 +287,12 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
     return { statusCode: 200 };
   }
 
+  const idcGroupIds = await getIdcGroupIdsByEmail(slackUserEmail);
+
   try {
     await assertAvpAuthorized(
-      cognitoUser.username,
-      cognitoUser.groups,
+      cognitoUsername,
+      idcGroupIds,
       request.accountId as string,
       request.permissionSetArn as string
     );
@@ -288,8 +312,8 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
     await invokeLambdaAsApprover(
       functionArn,
       requestId,
-      cognitoUser.username,
-      cognitoUser.groups,
+      cognitoUsername,
+      idcGroupIds,
       approverComment
     );
   } catch (err) {
