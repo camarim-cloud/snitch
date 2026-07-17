@@ -27,18 +27,27 @@ Before deploying Snitch, make sure you have:
   - Permissions to create IDC applications and Amplify apps
 - A **GitHub account** with access to the Snitch repository (Amplify Hosting deploys directly from GitHub)
 
+{: .important }
+Snitch must be deployed in the **same AWS account and the same AWS Region** where IAM Identity Center is running — it talks to the IDC Identity Store and SSO APIs directly, and these are only reachable from the account/Region that hosts the IDC instance. If IDC has been **delegated to a member account** (that is, administration was moved out of the Organizations management account), deploy Snitch into that **delegated administrator account**, not the management account.
+
+{: .note }
+As a best practice, delegate IDC administration to a dedicated member account rather than managing it in the Organizations management account. Keeping IDC (and Snitch) out of the management account limits the blast radius and follows the AWS multi-account guidance for separating workloads from the management account. See [Delegated administration for IAM Identity Center](https://docs.aws.amazon.com/singlesignon/latest/userguide/delegated-admin.html).
+
 {: .note }
 Snitch authenticates every user through IAM Identity Center via SAML 2.0. Amazon Cognito sits behind IDC and issues the tokens the app uses — you never manage passwords in Snitch.
+
+{: .note }
+The **Session Activity** and **Elevated Access** CloudTrail audit trails read session events from CloudWatch Logs. For those pages to show any events, CloudTrail must be configured to **deliver its logs to a CloudWatch Logs log group** — an S3-only trail is not enough. You supply that log group name later on the **Settings** page (see Step 3d).
 
 ---
 
 ## Step 1 — Register the IAM Identity Center Application
 
-Snitch needs a SAML 2.0 application in IAM Identity Center so your workforce can sign in. Do this once; the same application works for both production and sandbox.
+Snitch needs a SAML 2.0 application in IAM Identity Center so your workforce can sign in. This step registers the application for your **production** deployment. (For a local sandbox, register a **separate** IDC application — see [Deploying a Local Sandbox](#deploying-a-local-sandbox) below.)
 
 ### 1a. Choose a Cognito domain prefix
 
-Pick a globally unique prefix for the Cognito sign-in domain (for example, `snitch-auth`). It forms the sign-in URL and the SAML **Assertion Consumer Service (ACS) URL** you register in IDC:
+Pick a prefix for the Cognito sign-in domain. It must be **globally unique across all AWS accounts** in the Region, so choose something specific to your organization — a value that is already taken will cause the deploy to fail. It forms the sign-in URL and the SAML **Assertion Consumer Service (ACS) URL** you register in IDC:
 
 ```
 https://<COGNITO_DOMAIN_PREFIX>.auth.<REGION>.amazoncognito.com/saml2/idpresponse
@@ -55,7 +64,7 @@ In an Amplify Hosting deployment this prefix is generated automatically as `snit
 
    | Field | Value |
    |---|---|
-   | **Application ACS URL** | `https://<COGNITO_DOMAIN_PREFIX>.auth.<REGION>.amazoncognito.com/saml2/idpresponse` |
+   | **Application ACS URL** | `https://<COGNITO_DOMAIN_PREFIX>.auth.<REGION>.amazoncognito.com/saml2/idpresponse` (you'll finalize this after the first deploy in Step 3, once the real domain exists) |
    | **Application SAML audience** | `urn:amazon:cognito:sp:placeholder` (you'll update this after the first deploy in Step 3) |
 
 4. Under **Attribute mappings**, add the email mapping so Cognito receives each user's address:
@@ -92,7 +101,15 @@ Production Snitch runs on **AWS Amplify Hosting**, which builds and serves the a
 
 1. Open the **AWS Amplify** console → **Create new app**.
 2. Choose **GitHub** as the source, authorize Amplify, and select the **Snitch repository** and the branch you want to deploy.
-3. When prompted for **Environment variables**, add the values you collected in Step 1:
+3. Add the environment variables you collected in Step 1. The Amplify console does **not** prompt for these on the main create-app screen — the field is tucked away, so you set them in one of two places:
+
+   - **During app creation:** on the final **Review** step, expand the **Advanced settings** section — the **Environment variables** editor is inside it. Add each key/value there before you deploy.
+   - **After app creation (or to edit them later):** in the Amplify console choose **Hosting → Environment variables** (only visible once the app is connected to the git repo), then choose **Manage variables → add variable** and **Save**. By default Amplify applies variables to all branches, so you don't re-enter them per branch.
+
+   {: .important }
+   If you skip the env vars during creation, the first build will fail. That's expected — add the variables under **Hosting → Environment variables** and then **redeploy** the branch.
+
+   Add these values:
 
    | Variable | Required | Value |
    |---|---|---|
@@ -114,22 +131,29 @@ When the build finishes, Amplify gives you the app URL (`https://<branch>.<app-i
 
 A few one-time steps after the first successful deploy.
 
-### 3a. Update the SAML audience URI
+### 3a. Finalize the ACS URL and SAML audience URI
 
-The Cognito **User Pool ID** only exists after the first deploy. Update the IDC application so its audience matches:
+The Cognito **domain prefix** and **User Pool ID** only exist after the first deploy (in Amplify Hosting the prefix is auto-generated as `snitch-<branch>-<app-id>`). Update the IDC application so both values match:
 
 1. Open the IDC application from Step 1.
-2. Edit **Application metadata → Application SAML audience** and set it to:
+2. Edit **Application metadata → Application ACS URL** and set it to the real Cognito domain:
+
+   ```
+   https://<COGNITO_DOMAIN_PREFIX>.auth.<REGION>.amazoncognito.com/saml2/idpresponse
+   ```
+
+   (In Amplify Hosting the prefix is `snitch-<branch>-<app-id>`.)
+3. Edit **Application metadata → Application SAML audience** and set it to:
 
    ```
    urn:amazon:cognito:sp:<USER_POOL_ID>
    ```
 
    (Find the User Pool ID in the Amplify/Cognito console, format `<REGION>_XXXXXXXXX`.)
-3. Save.
+4. Save.
 
 {: .important }
-Until the audience matches, sign-in fails with a SAML audience mismatch. This is required after any deployment that creates a fresh User Pool.
+Until the ACS URL and audience match, sign-in fails with a SAML mismatch. This is required after any deployment that creates a fresh User Pool.
 
 ### 3b. Grant admin access
 
@@ -149,6 +173,9 @@ To enable the CloudTrail audit trail, an admin opens **Settings** and enters the
 
 Before (or instead of) deploying to production with Amplify Hosting, you can run the entire stack **locally** against your own AWS account. This is ideal for evaluating Snitch or developing changes: `npx ampx sandbox` provisions a personal, hot-reloaded backend and `npm run dev` serves the frontend at [http://localhost:5173](http://localhost:5173).
 
-A sandbox reuses the same IAM Identity Center application from Step 1 — you only need to provide the environment variables in your shell instead of the Amplify console.
+{: .important }
+Register a **separate** IAM Identity Center application for the sandbox — do **not** reuse the production application from Step 1. Each environment has its own Cognito domain, User Pool, and therefore its own ACS URL and SAML audience; pointing one IDC application at both leads to audience/ACS mismatches and sign-in failures. Repeat Step 1 to create a second application (e.g., `Snitch (sandbox)`) dedicated to your sandbox.
+
+For the sandbox you provide the environment variables in your shell instead of the Amplify console.
 
 See the **[Sandbox Deployment]({% link pages/idc-saml-setup.md %})** guide for the full local workflow, including the environment-variable helper script and troubleshooting.
