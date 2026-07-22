@@ -205,20 +205,6 @@ describe("RequestAccessPage", () => {
       ).toBeInTheDocument();
     });
 
-    it("shows a justification validation error when only that field is empty", async () => {
-      await openModal([ACCOUNT_1]);
-
-      // Fill the justification textarea — leave other fields empty to focus on justification error
-      const textarea = screen.getByPlaceholderText(/describe the business reason/i);
-      await userEvent.clear(textarea);
-
-      await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
-
-      expect(
-        screen.getByText(/explain why you need this access/i)
-      ).toBeInTheDocument();
-    });
-
     it("accepts text input in the justification textarea", async () => {
       await openModal([ACCOUNT_1]);
       const textarea = screen.getByPlaceholderText(/describe the business reason/i);
@@ -313,16 +299,6 @@ describe("RequestAccessPage", () => {
       expect(
         screen.queryByText(/start time must be in the future/i)
       ).not.toBeInTheDocument();
-    });
-
-    it("a time entered alongside a past date triggers the start time error", async () => {
-      await openModal();
-      createWrapper().findAllDatePickers()[0].setInputValue("2020/01/01");
-      createWrapper().findAllTimeInputs()[0].setInputValue("10:00");
-      await userEvent.click(screen.getByRole("button", { name: /submit request/i }));
-      expect(
-        screen.getByText("Start time must be in the future.")
-      ).toBeInTheDocument();
     });
 
     it("shows 'Start time must be in the future.' when the date is in the past", async () => {

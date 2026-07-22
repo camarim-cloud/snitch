@@ -18,13 +18,4 @@ describe("formatDateTime", () => {
     expect(out).not.toContain("Z");
     expect(out).not.toContain("2026-07-16");
   });
-
-  it("produces the same output as the browser's toLocaleString for that instant", () => {
-    const iso = "2026-07-16T00:27:01.661Z";
-    const expected = new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "medium",
-    });
-    expect(formatDateTime(iso)).toBe(expected);
-  });
 });

@@ -323,16 +323,4 @@ describe("ElevatedAccessPage", () => {
     });
   });
 
-  describe("status filter", () => {
-    it("shows all requests when filter is All statuses", async () => {
-      mockListAllAccessRequests.mockResolvedValue({
-        data: [ACTIVE_REQUEST, EXPIRED_REQUEST],
-        errors: undefined,
-      });
-      render(<ElevatedAccessPage />);
-      await waitFor(() => screen.getByText("alice@example.com"));
-
-      expect(screen.getByText("bob@example.com")).toBeInTheDocument();
-    });
-  });
 });

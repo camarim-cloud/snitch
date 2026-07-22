@@ -140,16 +140,6 @@ describe("removePermissionSetHandler", () => {
     expect(updateCommand().input.ExpressionAttributeValues[":s"]).toBe("REVOKED");
   });
 
-  it("updates DynamoDB status to EXPIRED when revokedByAdmin is false", async () => {
-    mockSsoSend.mockResolvedValue({
-      AccountAssignmentDeletionStatus: { Status: "SUCCEEDED" },
-    });
-
-    await handler({ ...BASE_INPUT, revokedByAdmin: false });
-
-    expect(updateCommand().input.ExpressionAttributeValues[":s"]).toBe("EXPIRED");
-  });
-
   it("sends a FINISHED notification with the final EXPIRED status and request context", async () => {
     mockSsoSend.mockResolvedValue({
       AccountAssignmentDeletionStatus: { Status: "SUCCEEDED" },

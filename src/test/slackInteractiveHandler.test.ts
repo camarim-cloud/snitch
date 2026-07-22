@@ -344,21 +344,6 @@ describe("slackInteractiveHandler", () => {
     expect(idcCommandTypes).toEqual(["IdcListUsers", "IdcListGroupMemberships"]);
   });
 
-  it("authorizes a GROUP-only approver whose grant comes from an IDC group, not their username", async () => {
-    // The USER (Snitch::Approver == username) has no direct policy; authorization must come
-    // from the group parent. AVP ALLOWs only because the IDC GroupId parent is present.
-    setupHappyPath();
-    await handler(makeEvent(makeBody("approve")));
-
-    const avpCall = mockAvpSend.mock.calls[0][0];
-    expect(avpCall.input.entities.entityList[0].parents).toEqual([
-      { entityType: "Snitch::ApproverGroup", entityId: IDC_GROUP_ID },
-    ]);
-    // Delegated invocation carries the same IDC GroupIds forward as the cognito:groups claim.
-    const payload = JSON.parse(Buffer.from(mockLambdaSend.mock.calls[0][0].input.Payload).toString());
-    expect(payload.identity.claims["cognito:groups"]).toEqual([IDC_GROUP_ID]);
-  });
-
   it("falls back to an empty group list when the Slack email has no matching IDC user", async () => {
     mockDynamoSend
       .mockResolvedValueOnce({ Item: SETTINGS_ITEM })

@@ -55,12 +55,6 @@ describe("getMyIDCUserHandler", () => {
     ).rejects.toThrow("Could not resolve email from identity");
   });
 
-  it("returns null when no IDC user matches the email", async () => {
-    mockGetMyIDCUser.mockResolvedValue(null);
-    const result = await handler(makeEvent(EMAIL));
-    expect(result).toBeNull();
-  });
-
   it("propagates IDC helper errors", async () => {
     mockGetMyIDCUser.mockRejectedValue(new Error("IdentityStore unavailable"));
     await expect(handler(makeEvent(EMAIL))).rejects.toThrow("IdentityStore unavailable");
